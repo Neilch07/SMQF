@@ -7,6 +7,7 @@ from factor import factor
 from analysis import *
 from alpha101 import *
 from gtja191 import *
+from chenhan_factor_def import vol_std20, ret_sum60_rinv, vol_priceSum_rinv, ret_20, std_20
 
 import warnings
 warnings.filterwarnings("ignore")  # Ignore all warnings
@@ -20,5 +21,5 @@ params={'ir_details': True}
 factor_property={'universe':'top75pct'}#,'benchmark': 'cs500'}
 #params={}
 
-f=alpha191_176(params=params,factor_property=factor_property)
+f=std_20(params=params,factor_property=factor_property)
 f.run()
