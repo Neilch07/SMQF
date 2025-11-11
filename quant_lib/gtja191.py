@@ -1,7 +1,7 @@
-from factor import factor
+from .factor import factor
 import numpy as np
 import pandas as pd
-from analysis import *
+from .analysis import *
 
 class alpha191_003(factor):
     def set_factor_property(self):

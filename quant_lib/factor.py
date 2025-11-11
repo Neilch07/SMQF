@@ -40,16 +40,16 @@ class factor():
                          'smooth_periods': 0, # number of periods to calculate moving average of factor 
                          'sector_neutral': False,
                          }
-    data: Dict[str,pd.DataFrame] = field(default={}, kw_only=True)  
+    data: Dict[str,pd.DataFrame] = field(factory=dict, kw_only=True)  
     params: Dict[str,Union[int, float, str]] = field(default=None, kw_only=True)
     factor_property: Dict[str,Union[int, float, str]] = field(default=None, kw_only=True)
-    data_needed: List[str] = field(default=[], init=False)
+    data_needed: List[str] = field(factory=list, init=False)
     factor_data: pd.DataFrame = field(default=None, init=False)
     returns: pd.DataFrame = field(default=None, init=False)
     sectors: pd.DataFrame = field(default=None, init=False)
     universe: pd.DataFrame = field(default=None, init=False)
     index_returns: pd.DataFrame = field(default=None, init=False)
-    results: Dict[str,Union[int, float, str]] = field(default={}, init=False)
+    results: Dict[str,Union[int, float, str]] = field(factory=dict, init=False)
    
     def __attrs_post_init__(self):
         if self.params is not None:
@@ -101,6 +101,49 @@ class factor():
         return data_names
 
     def read_pickle(self,fld):
+        # 字段名映射：
+        # 对于2007-2014和2015-2020: 因子定义 -> 单数形式
+        # 对于2021-current: 因子定义 -> 复数形式
+        field_mapping_old = {  # 旧目录(2007-2014, 2015-2020)使用单数
+            'close': 'close',
+            'open': 'open',
+            'high': 'high',
+            'low': 'low',
+            'volume': 'volume',
+            'amount': 'turnover_amount',  # amount映射到turnover_amount
+            'return': 'pct_change',  # return映射到pct_change
+            'industry': 'industry',
+            'index_data': 'index_data',
+            'top75pct': 'top75pct',
+            'top60pct': 'top60pct',
+            'cs500': 'cs500',
+            'cs800': 'cs800',
+            'cs1000': 'cs1000',
+            'cs1800': 'cs1800',
+            'hs300': 'hs300',
+            'sse50': 'sse50',
+        }
+        
+        field_mapping_new = {  # 新目录(2021-current)使用复数
+            'close': 'closes',
+            'open': 'opens',
+            'high': 'highs',
+            'low': 'lows',
+            'volume': 'volumes',
+            'amount': 'turnover_amounts',
+            'return': 'pct_changes',
+            'industry': 'industrys',
+            'index_data': 'index_datas',
+            'top75pct': 'top75pcts',
+            'top60pct': 'top60pcts',
+            'cs500': 'cs500s',
+            'cs800': 'cs800s',
+            'cs1000': 'cs1000s',
+            'cs1800': 'cs1800s',
+            'hs300': 'hs300s',
+            'sse50': 'sse50s',
+        }
+        
         start_date = self.params['start_date']
         if (start_date is not None):
             start_date = pd.to_datetime(start_date)
@@ -108,12 +151,18 @@ class factor():
         date2 = pd.to_datetime('2021-01-01')
         dir_name = self.params['data_dir']
         data = None
+        
         if (start_date is None) or (start_date<date1):
-            f_name=os.path.join(dir_name,"2007-2014",fld+'1.pkl')
+            # 2007-2014 目录使用旧映射
+            actual_fld = field_mapping_old.get(fld, fld)
+            f_name=os.path.join(dir_name,"2007-2014",actual_fld+'1.pkl')
             data=pd.read_pickle(f_name)
             data.index=pd.to_datetime(data.index)
+            
         if (start_date is None) or (start_date<date2):
-            f_name=os.path.join(dir_name,"2015-2020",fld+'2.pkl')
+            # 2015-2020 目录使用旧映射
+            actual_fld = field_mapping_old.get(fld, fld)
+            f_name=os.path.join(dir_name,"2015-2020",actual_fld+'2.pkl')
             if data is None:
                 data=pd.read_pickle(f_name)
                 data.index=pd.to_datetime(data.index)
@@ -121,7 +170,10 @@ class factor():
                 data1=pd.read_pickle(f_name)
                 data1.index=pd.to_datetime(data1.index)
                 data=pd.concat([data,data1],join='outer')
-        f_name=os.path.join(dir_name,"2021-current",fld+'s.pkl')
+                
+        # 2021-current 目录使用新映射
+        actual_fld = field_mapping_new.get(fld, fld)
+        f_name=os.path.join(dir_name,"2021-current",actual_fld+'.pkl')
         if data is None:
             data=pd.read_pickle(f_name)
             data.index=pd.to_datetime(data.index)
@@ -133,12 +185,12 @@ class factor():
                                 
 
     def load_data(self):
-        self.returns = self.read_pickle('pct_change')
+        self.returns = self.read_pickle('return')  # 使用统一的字段名'return',会自动映射
         for fld in self.data_needed:
             self.data[fld] = self.read_pickle(fld)
         if self.factor_property['sector_neutral']==True:
             if 'industry' not in self.data_needed:
-                self.sectors = self.read_pickle('industry')
+                self.sectors = self.read_pickle('industry')  # 使用统一的字段名
             else:
                 self.sectors = self.data['industry']
         if self.factor_property['universe'] is not None:
@@ -148,7 +200,7 @@ class factor():
                 self.universe = self.data['universe']
         if self.factor_property['benchmark'] is not None:
             if 'index_data' not in self.data_needed:
-                index_data = self.read_pickle('index_data')
+                index_data = self.read_pickle('index_data')  # 使用统一的字段名
             else:
                 index_data = self.data['index_data']
             self.index_returns = index_data[self.factor_property['benchmark']+'_pct']
