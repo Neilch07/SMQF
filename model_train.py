@@ -524,7 +524,7 @@ def train_catboost(
 
 def main():
 	parser = argparse.ArgumentParser(description="Train XGBoost on project factors")
-	parser.add_argument("--modules", nargs="*", default=["alpha101", "gtja191"], help="factor modules to use")
+	parser.add_argument("--modules", nargs="*", default=["alpha101", "gtja191","chenhan_factor"], help="factor modules to use")
 	parser.add_argument("--include", nargs="*", default=[], help="explicit factor class names to include")
 	parser.add_argument("--exclude", nargs="*", default=[], help="factor class names to exclude")
 	parser.add_argument("--start-date", type=str, default=None)
@@ -541,6 +541,7 @@ def main():
 	parser.add_argument("--rank-ic", action="store_true", help="运行所有因子并输出 IC 排序 JSON")
 	parser.add_argument("--ic-horizon", type=int, default=5, help="用于 IC 排序的 horizon")
 	parser.add_argument("--top-n", type=int, default=50, help="根据 IC 选择前 N 个因子用于训练")
+	parser.add_argument("--ic-threshold", type=float, default=None, help="IC阈值筛选：只保留 abs(avg_ic) > 该阈值的因子（优先级高于 top-n）")
 	parser.add_argument("--save-factor-json", type=str, default=os.path.join(THIS_DIR, "artifacts", "factor_ic_rank.json"))
 	parser.add_argument("--persist-factors", action="store_true", help="是否在因子框架内部触发保存")
 
@@ -571,15 +572,22 @@ def main():
 		with open(args.save_factor_json, "w", encoding="utf-8") as f:
 			json.dump({"avg_ic": sorted_items, "all_run": ok_names}, f, ensure_ascii=False, indent=2)
 		print(f"[info] IC ranking saved -> {args.save_factor_json}")
-		# 取前 top-n
-		factor_names_final = [name for name,_ in sorted_items[:args.top_n]]
-		# 若用户未指定 include 则用 top-n
+		
+		# IC阈值筛选（优先级高于 top-n）
+		if args.ic_threshold is not None:
+			factor_names_final = [name for name, ic in sorted_items if abs(ic) > args.ic_threshold]
+			print(f"[info] IC threshold filter (abs(IC) > {args.ic_threshold}): {len(factor_names_final)} factors passed")
+		else:
+			# 取前 top-n
+			factor_names_final = [name for name,_ in sorted_items[:args.top_n]]
+		
+		# 若用户未指定 include 则用筛选后的因子
 		if not args.include:
 			args.include = factor_names_final
 		else:
-			# 用户已指定 include，则与 top-n 做交集增强可复用性
+			# 用户已指定 include，则与筛选结果做交集增强可复用性
 			args.include = [nm for nm in args.include if nm in factor_names_final]
-		print(f"[info] Selected top {len(args.include)} factors for training: {args.include[:10]}{'...' if len(args.include)>10 else ''}")
+		print(f"[info] Selected {len(args.include)} factors for training: {args.include[:10]}{'...' if len(args.include)>10 else ''}")
 		
 		# 清理导入的模块，强制重新加载
 		import importlib
