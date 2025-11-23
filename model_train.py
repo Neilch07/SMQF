@@ -3,6 +3,7 @@ import sys
 import json
 import argparse
 import warnings
+import traceback
 from dataclasses import dataclass
 from typing import List, Dict, Tuple, Optional
 
@@ -25,15 +26,35 @@ import importlib  # noqa: E402
 
 def discover_factor_classes(module_name: str) -> Dict[str, type]:
 	"""从给定模块中发现继承自 factor 的因子类。"""
-	# 使用完整的包名导入
-	full_module_name = f"quant_lib.{module_name}"
-	m = importlib.import_module(full_module_name)
+	# 直接导入模块名（因为 quant_lib 已经在 sys.path 中）
+	try:
+		m = importlib.import_module(module_name)
+	except ImportError as e1:
+		# 如果失败，尝试完整包名
+		try:
+			full_module_name = f"quant_lib.{module_name}"
+			m = importlib.import_module(full_module_name)
+		except ImportError as e2:
+			print(f"[error] Failed to import {module_name}: {e1}, {e2}")
+			return {}
+	
+	# 从模块内部获取 factor 基类（处理不同 import 路径的问题）
+	base_factor = m.__dict__.get('factor', None)
+	if base_factor is None:
+		print(f"[warn] Module {module_name} does not have 'factor' in its namespace")
+		return {}
+	
 	classes = {}
 	for k, v in m.__dict__.items():
-		if isinstance(v, type) and v is not factor and issubclass(v, factor):
-			# 过滤内部/测试类（以 alpha 开头的为主）
-			if str(k).startswith("alpha"):
-				classes[k] = v
+		if isinstance(v, type):
+			try:
+				if v is not base_factor and issubclass(v, base_factor):
+					# 过滤内部/测试类（以 alpha 开头的为主）
+					if str(k).startswith("alpha"):
+						classes[k] = v
+			except TypeError:
+				pass
+	
 	return classes
 
 
@@ -48,7 +69,7 @@ def select_factor_classes(
 	all_classes: Dict[str, type] = {}
 	for mod in modules:
 		all_classes.update(discover_factor_classes(mod))
-
+	
 	if include:
 		picked = {name: all_classes[name] for name in include if name in all_classes}
 	else:
@@ -101,6 +122,8 @@ def compute_factor_features(
 		except Exception as e:
 			# 单个因子失败不影响整体（记录并跳过）
 			print(f"[warn] factor {name} failed: {e}")
+			if "--debug" in sys.argv:
+				traceback.print_exc()
 			continue
 
 	if returns_ref is None:
@@ -143,9 +166,8 @@ def run_all_factors_and_rank_ic(
 				avg_ic_map[name] = avg_ic
 			ok_names.append(name)
 		except Exception as e:
-			# import traceback
 			print(f"[warn] factor {name} failed: {e}")
-			# print(traceback.format_exc())  # 取消注释可以看到完整错误
+			# print(traceback.format_exc())  # 完整错误信息（调试时启用）
 			continue
 
 	return avg_ic_map, ok_names
@@ -164,8 +186,11 @@ def intersect_align(panels: List[pd.DataFrame]) -> List[pd.DataFrame]:
 
 
 def panel_to_long(df: pd.DataFrame, name: str) -> pd.Series:
-	s = df.stack()
+	"""将 (date x ticker) 面板转换为长格式 Series，索引为 (date, ticker)"""
+	s = df.stack()  # stack() 默认生成 (index, columns) = (date, ticker) 的 MultiIndex
 	s.name = name
+	# 确保 MultiIndex 的名称正确
+	s.index.names = ['date', 'ticker']
 	return s
 
 
@@ -214,8 +239,7 @@ def build_ml_dataset(
 
 	# 可选：日内截面标准化与裁剪（降低量纲差异与极值影响）
 	if zscore:
-		# 根据 (date,ticker) 的多重索引 level=0 是日期
-		dates = X.index.get_level_values(0)
+		# 根据 (date,ticker) 的多重索引，level='date' 或 level=0 是日期
 		# 逐日 zscore
 		def _z(df: pd.DataFrame) -> pd.DataFrame:
 			mu = df.mean(axis=0)
@@ -226,11 +250,11 @@ def build_ml_dataset(
 				z = z.clip(lower=-clip, upper=clip)
 			return z
 
-		# 为避免 groupby 开销过大，这里使用矢量化：重构成宽表透视不必要，直接按日期切片
-		# 但简单实现用 groupby.level 可读性更好
-		X = X.groupby(level=0).apply(lambda g: _z(g.droplevel(0))).droplevel(0)
+		# 按日期分组进行标准化
+		X = X.groupby(level='date').apply(lambda g: _z(g.droplevel('date')))
 
-	sample_dates = X.index.get_level_values(0)
+	# 从 MultiIndex 中提取日期（level='date' 或 level=0）
+	sample_dates = X.index.get_level_values('date')
 	return X, y, pd.DatetimeIndex(sample_dates.unique())
 
 
@@ -556,6 +580,13 @@ def main():
 			# 用户已指定 include，则与 top-n 做交集增强可复用性
 			args.include = [nm for nm in args.include if nm in factor_names_final]
 		print(f"[info] Selected top {len(args.include)} factors for training: {args.include[:10]}{'...' if len(args.include)>10 else ''}")
+		
+		# 清理导入的模块，强制重新加载
+		import importlib
+		import sys
+		for mod in args.modules:
+			if mod in sys.modules:
+				importlib.reload(sys.modules[mod])
 
 	# 选择用于训练的因子类
 	klass_map = select_factor_classes(args.modules, include=args.include, exclude=args.exclude)
