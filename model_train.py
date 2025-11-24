@@ -764,18 +764,34 @@ def main():
 	parser.add_argument("--horizon", type=int, default=5)
 	parser.add_argument("--train-end", type=str, default="2021-12-31")
 	parser.add_argument("--val-end", type=str, default="2022-12-31")
-	parser.add_argument("--model-out", type=str, default=os.path.join(THIS_DIR, "models", "xgb_model.json"))
-	parser.add_argument("--preds-out", type=str, default=os.path.join(THIS_DIR, "artifacts", "test_preds.parquet"))
 	parser.add_argument("--no-zscore", action="store_true")
 	parser.add_argument("--engine", type=str, choices=["xgb","lgbm","catboost"], default="xgb", help="选择训练模型框架")
 	parser.add_argument("--rank-ic", action="store_true", help="运行所有因子并输出 IC 排序 JSON")
 	parser.add_argument("--ic-horizon", type=int, default=5, help="用于 IC 排序的 horizon")
 	parser.add_argument("--ic-threshold", type=float, default=0.0, help="IC 阈值筛选：只保留 abs(rank_ic) > threshold 的因子")
 	parser.add_argument("--top-n", type=int, default=50, help="根据 IC 选择前 N 个因子用于训练")
-	parser.add_argument("--save-factor-json", type=str, default=os.path.join(THIS_DIR, "artifacts", "factor_ic_rank.json"))
 	parser.add_argument("--persist-factors", action="store_true", help="是否在因子框架内部触发保存")
+	parser.add_argument("--run-name", type=str, default=None, help="自定义运行名称（可选），默认使用时间戳")
 
 	args = parser.parse_args()
+
+	# 创建 run-specific 文件夹
+	# 格式: run_<engine>_<timestamp> 或 run_<engine>_<custom_name>
+	import time
+	timestamp = time.strftime("%Y%m%d_%H%M%S")
+	if args.run_name:
+		run_folder_name = f"run_{args.engine}_{args.run_name}"
+	else:
+		run_folder_name = f"run_{args.engine}_{timestamp}"
+
+	run_dir = os.path.join(THIS_DIR, "runs", run_folder_name)
+	os.makedirs(run_dir, exist_ok=True)
+	print(f"[info] Run directory: {run_dir}")
+
+	# 更新所有输出路径到 run-specific 目录
+	args.model_out = os.path.join(run_dir, f"{args.engine}_model.json")
+	args.preds_out = os.path.join(run_dir, "test_preds.parquet")
+	args.save_factor_json = os.path.join(run_dir, "factor_ic_rank.json")
 
 	# 将字符串"None"转换为Python的None
 	if args.universe == "None":
@@ -882,22 +898,12 @@ def main():
 	pretty = json.dumps(metrics, ensure_ascii=False, indent=2)
 	print(pretty)
 
-	# 파일명에 요인 수, 학습 기간 포함
-	num_factors = len(klass_map)
-	train_period = args.train_end.replace('-', '')
-	val_period = args.val_end.replace('-', '')
-	filename = f"metrics_{args.engine}_top{num_factors}_train{train_period}_val{val_period}.json"
-	out_path = os.path.join(THIS_DIR, "artifacts", filename)
-	os.makedirs(os.path.dirname(out_path), exist_ok=True)
-	with open(out_path, "w", encoding="utf-8") as f:
+	# 保存 metrics 到 run 文件夹
+	metrics_path = os.path.join(run_dir, "metrics.json")
+	with open(metrics_path, "w", encoding="utf-8") as f:
 		f.write(pretty)
 
-	# 기존 호환성을 위해 간단한 파일명도 유지
-	simple_path = os.path.join(THIS_DIR, "artifacts", f"metrics_{args.engine}.json")
-	with open(simple_path, "w", encoding="utf-8") as f:
-		f.write(pretty)
-
-	print(f"\n✅ Metrics saved to: {filename}")
+	print(f"\n✅ Metrics saved to: {metrics_path}")
 
 	# 计算并绘制净值曲线
 	print("\n[info] Computing equity curves...")
@@ -912,8 +918,8 @@ def main():
 	# 组织数据用于绘图（支持多模型对比）
 	model_equity_data = {args.engine.upper(): equity_data}
 
-	# 绘制净值曲线
-	equity_plot_path = os.path.join(THIS_DIR, "artifacts", f"equity_curve_{args.engine}.png")
+	# 绘制净值曲线到 run 文件夹
+	equity_plot_path = os.path.join(run_dir, "equity_curve.png")
 	plot_equity_curves(
 		model_equity_data,
 		train_end=args.train_end,
@@ -921,7 +927,33 @@ def main():
 		save_path=equity_plot_path,
 	)
 
-	print(f"✅ All results saved!")
+	# 保存 run 配置信息
+	run_config = {
+		"run_name": run_folder_name,
+		"timestamp": timestamp,
+		"engine": args.engine,
+		"num_factors": len(klass_map),
+		"factor_names": sorted(list(klass_map.keys())),
+		"horizon": args.horizon,
+		"train_end": args.train_end,
+		"val_end": args.val_end,
+		"universe": args.universe,
+		"benchmark": args.benchmark,
+		"ic_threshold": args.ic_threshold if args.rank_ic else None,
+		"zscore": not args.no_zscore,
+	}
+	config_path = os.path.join(run_dir, "run_config.json")
+	with open(config_path, "w", encoding="utf-8") as f:
+		json.dump(run_config, f, ensure_ascii=False, indent=2)
+
+	print(f"\n✅ All results saved to: {run_dir}")
+	print(f"   - Config: run_config.json")
+	print(f"   - Metrics: metrics.json")
+	print(f"   - Model: {os.path.basename(args.model_out)}")
+	print(f"   - Predictions: {os.path.basename(args.preds_out)}")
+	print(f"   - Equity curve: equity_curve.png")
+	if args.rank_ic:
+		print(f"   - IC ranking: factor_ic_rank.json")
 
 
 if __name__ == "__main__":
