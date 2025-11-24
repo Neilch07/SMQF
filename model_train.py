@@ -216,10 +216,14 @@ def build_ml_dataset(
 
 	⚠️ 时序逻辑说明（重要）：
 	1. 特征 X(t): 使用 t 日收盘时刻可获得的因子值（基于 t 日及之前的数据）
-	2. 标签 y(t): 使用 shift(-horizon) 获取 [t+1, t+horizon] 的未来收益
-	   - 原因：t 日收盘时我们还未 close，无法获得 t 日的收益
+	2. 标签 y(t): 使用 shift(-1) 然后 rolling(horizon).sum() 获取 [t+1, t+horizon] 的未来收益
+	   - 原因：t 日收盘时我们无法获得 t 日的收益（需要等收盘结算）
 	   - 因此只能预测并使用 t+1 日开始的未来收益
 	   - 实际交易：t 日收盘前下单 → t+1 日开盘成交 → 获得 [t+1, t+horizon] 收益
+	   - 正确方法：ret.shift(-1).rolling(horizon).sum()
+	     * shift(-1): 将 t+1 日的收益移到 t 日位置
+	     * rolling(horizon).sum(): 计算从当前位置开始的 horizon 日累计收益
+	     * 结果：t 日位置得到 [t+1, ..., t+horizon] 的收益 ✅
 	3. 这样可以避免使用未来信息（look-ahead bias），确保逻辑正确 ✅
 
 	WARNING: zscore 正规化应在 train/val/test 分离后进行（防止 data leakage）
@@ -231,8 +235,9 @@ def build_ml_dataset(
 	ret = aligned[-1]
 
 	# 目标：未来 horizon 日累计收益
-	# ✅ shift(-horizon) 确保 t 日的 y 标签是 [t+1, t+horizon] 的收益（不包含 t 日）
-	future_y = ret.rolling(horizon, min_periods=max(1, horizon // 2)).sum().shift(-horizon)
+	# ✅ 修正：先 shift(-1) 跳过 t 日，再 rolling sum，确保 t 日的 y 标签是真正的 [t+1, t+horizon] 收益
+	# 原代码 bug: rolling().sum().shift(-h) 会导致 t 日用到 [t-h+1, t] 的收益（look-ahead bias）
+	future_y = ret.shift(-1).rolling(horizon, min_periods=horizon).sum()
 
 	# 交集日期/股票
 	idx = aligned_features[0].index
@@ -249,6 +254,12 @@ def build_ml_dataset(
 	series_list = [panel_to_long(df, name) for df, name in zip(aligned_features, features.keys())]
 	X = pd.concat(series_list, axis=1)
 	y = panel_to_long(future_y, "y")
+
+	# 检查重复索引
+	if X.index.duplicated().any():
+		n_dups = X.index.duplicated().sum()
+		raise ValueError(f"Found {n_dups} duplicated (date, ticker) pairs in the dataset. "
+						 f"This indicates data quality issues.")
 
 	# 清理缺失
 	data = pd.concat([X, y], axis=1).dropna(how="any")
@@ -300,8 +311,9 @@ def normalize_with_train_stats(
 			if len(past_dates) > 0:
 				stats = train_stats.loc[past_dates[-1]]
 			else:
-				# Train 이전 날짜: 정규화 스킵
-				continue
+				# Train 이전 날짜: 에러 발생 (데이터가 잘못됨)
+				raise ValueError(f"Found date {date} before training period. This should not happen. "
+								 f"Check your data splitting logic.")
 
 		# 정규화 적용
 		for col in X.columns:
