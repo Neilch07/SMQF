@@ -611,7 +611,7 @@ def main():
 			persist_factors=args.persist_factors,
 		)
 		# 排序并保存 JSON
-		sorted_items = sorted(avg_ic_map.items(), key=lambda kv: kv[1], reverse=True)
+		sorted_items = sorted(avg_ic_map.items(), key=lambda kv: abs(kv[1]), reverse=True)
 		os.makedirs(os.path.dirname(args.save_factor_json), exist_ok=True)
 		with open(args.save_factor_json, "w", encoding="utf-8") as f:
 			json.dump({"avg_ic": sorted_items, "all_run": ok_names}, f, ensure_ascii=False, indent=2)
