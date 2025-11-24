@@ -212,9 +212,17 @@ def build_ml_dataset(
 
 	- X: 行为 (date,ticker) 的样本，列为各因子
 	- y: 目标为未来 horizon 日累计收益
-	- dates: 样본对응의 날짜 索引（方便按时间切分）
+	- dates: 样本对应的日期索引（方便按时间切分）
 
-	WARNING: zscore 정규화는 train/val/test 분리 후에 수행해야 함 (data leakage 방지)
+	⚠️ 时序逻辑说明（重要）：
+	1. 特征 X(t): 使用 t 日收盘时刻可获得的因子值（基于 t 日及之前的数据）
+	2. 标签 y(t): 使用 shift(-horizon) 获取 [t+1, t+horizon] 的未来收益
+	   - 原因：t 日收盘时我们还未 close，无法获得 t 日的收益
+	   - 因此只能预测并使用 t+1 日开始的未来收益
+	   - 实际交易：t 日收盘前下单 → t+1 日开盘成交 → 获得 [t+1, t+horizon] 收益
+	3. 这样可以避免使用未来信息（look-ahead bias），确保逻辑正确 ✅
+
+	WARNING: zscore 正规化应在 train/val/test 分离后进行（防止 data leakage）
 	"""
 	# 对齐所有特征与收益面板
 	panels = list(features.values()) + [returns]
@@ -222,7 +230,8 @@ def build_ml_dataset(
 	aligned_features = aligned[:-1]
 	ret = aligned[-1]
 
-	# 目标：未来 h 日累计收益
+	# 目标：未来 horizon 日累计收益
+	# ✅ shift(-horizon) 确保 t 日的 y 标签是 [t+1, t+horizon] 的收益（不包含 t 日）
 	future_y = ret.rolling(horizon, min_periods=max(1, horizon // 2)).sum().shift(-horizon)
 
 	# 交集日期/股票
@@ -328,6 +337,54 @@ def time_split_indices(
 	return train_mask, val_mask, test_mask
 
 
+def compute_equity_curve(
+	df_scores: pd.DataFrame,  # index: (date,ticker), column: pred, y
+	quantile: float = 0.2,
+) -> pd.Series:
+	"""计算多空组合的净值曲线（cumulative return）。
+
+	⚠️ 时序逻辑：
+	- df_scores 的 date 索引是信号日期 t
+	- y 列是 [t+1, t+horizon] 的未来收益（已经通过 shift(-horizon) 对齐）
+	- 每日的持仓收益直接对应该日的 y 值（正确反映了下一个交易日的实际收益）
+
+	Args:
+		df_scores: 预测数据，包含 pred（预测）和 y（实际收益）
+		quantile: 多空组合的分位数（如 0.2 表示做多 top 20%，做空 bottom 20%）
+
+	Returns:
+		日期索引的净值曲线（累计收益，初始值为 1.0）
+	"""
+	ls_daily_returns = []
+	dates = []
+	
+	# 按日期分组计算每日多空收益
+	for d, g in df_scores.groupby(level=0):  # level=0 是 date
+		if len(g) < 20:  # 样本数太少则跳过
+			continue
+		
+		# 根据预测值排序
+		ranks = g["pred"].rank(pct=True)
+		
+		# 多头：预测收益最高的 quantile 分位
+		top_ret = g.loc[ranks >= (1 - quantile), "y"].mean()
+		# 空头：预测收益最低的 quantile 分位
+		bot_ret = g.loc[ranks <= quantile, "y"].mean()
+		
+		if np.isfinite(top_ret) and np.isfinite(bot_ret):
+			# 多空组合收益 = 多头收益 - 空头收益
+			ls_daily_returns.append(top_ret - bot_ret)
+			dates.append(d)
+	
+	# 转换为 Series
+	ls_series = pd.Series(ls_daily_returns, index=pd.DatetimeIndex(dates))
+	
+	# 计算累计净值（初始值为 1.0）
+	equity_curve = (1 + ls_series).cumprod()
+	
+	return equity_curve
+
+
 def evaluate_predictions(
 	df_scores: pd.DataFrame,  # index: (date,ticker), column: pred, y
 	quantile: float = 0.2,
@@ -373,6 +430,104 @@ def evaluate_predictions(
 	return {"rmse": rmse, "ic_mean": ic_mean, "ic_ir": ic_ir, "ls_ann_ret": ann_ret, "ls_ann_ir": ann_ir}
 
 
+def plot_equity_curves(
+	equity_data: Dict[str, Dict[str, pd.Series]],
+	train_end: str,
+	val_end: str,
+	save_path: Optional[str] = None,
+):
+	"""绘制多模型净值曲线对比图，区分样本内（训练+验证）和样本外（测试）。
+
+	Args:
+		equity_data: {
+			"model_name": {
+				"train": equity_curve_series,
+				"val": equity_curve_series,
+				"test": equity_curve_series,
+			}
+		}
+		train_end: 训练集结束日期（样本内外分界线1）
+		val_end: 验证集结束日期（样本内外分界线2）
+		save_path: 图片保存路径，如 None 则显示
+	"""
+	try:
+		import matplotlib.pyplot as plt
+		import matplotlib.dates as mdates
+	except ImportError:
+		print("[warn] matplotlib 未安装，无法绘制净值曲线")
+		return
+
+	plt.figure(figsize=(14, 7))
+	ax = plt.gca()
+
+	# 颜色方案
+	colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+	color_idx = 0
+
+	# 转换分界日期
+	train_end_dt = pd.to_datetime(train_end)
+	val_end_dt = pd.to_datetime(val_end)
+
+	# 绘制每个模型的净值曲线
+	for model_name, splits in equity_data.items():
+		color = colors[color_idx % len(colors)]
+		color_idx += 1
+
+		# 合并 train, val, test 的净值曲线
+		full_equity = pd.Series(dtype=float)
+		
+		for split_name in ["train", "val", "test"]:
+			if split_name in splits and len(splits[split_name]) > 0:
+				split_curve = splits[split_name]
+				
+				# 如果不是第一段，需要接续前一段的最终净值
+				if len(full_equity) > 0:
+					last_value = full_equity.iloc[-1]
+					# 将当前段的净值调整为接续上一段
+					split_curve = split_curve / split_curve.iloc[0] * last_value
+				
+				full_equity = pd.concat([full_equity, split_curve])
+
+		# 绘制完整净值曲线
+		if len(full_equity) > 0:
+			ax.plot(full_equity.index, full_equity.values, 
+				   label=model_name, color=color, linewidth=2, alpha=0.8)
+
+	# 添加样本内外分界线
+	ax.axvline(x=train_end_dt, color='gray', linestyle='--', linewidth=1.5, alpha=0.7, label='Train/Val Split')
+	ax.axvline(x=val_end_dt, color='red', linestyle='--', linewidth=1.5, alpha=0.7, label='Val/Test Split (样本外开始)')
+
+	# 添加区域标注
+	ymin, ymax = ax.get_ylim()
+	ax.text(train_end_dt, ymax * 0.95, '← 训练期', ha='right', va='top', fontsize=10, alpha=0.7)
+	ax.text(train_end_dt, ymax * 0.95, '验证期 →', ha='left', va='top', fontsize=10, alpha=0.7)
+	ax.text(val_end_dt, ymax * 0.95, '← 样本内', ha='right', va='top', fontsize=11, fontweight='bold', alpha=0.8)
+	ax.text(val_end_dt, ymax * 0.95, '样本外 →', ha='left', va='top', fontsize=11, fontweight='bold', 
+		   color='red', alpha=0.8)
+
+	# 图表美化
+	ax.set_xlabel('Date', fontsize=12)
+	ax.set_ylabel('Cumulative Return (Net Value)', fontsize=12)
+	ax.set_title('Multi-Model Equity Curves (In-Sample vs Out-of-Sample)', fontsize=14, fontweight='bold')
+	ax.legend(loc='upper left', fontsize=10)
+	ax.grid(True, alpha=0.3)
+	
+	# 日期格式化
+	ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+	ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+	plt.xticks(rotation=45)
+
+	plt.tight_layout()
+
+	if save_path:
+		os.makedirs(os.path.dirname(save_path), exist_ok=True)
+		plt.savefig(save_path, dpi=300, bbox_inches='tight')
+		print(f"📊 Equity curve saved to: {save_path}")
+		plt.close()
+	else:
+		plt.show()
+
+
 def train_xgboost(
 	X: pd.DataFrame,
 	y: pd.Series,
@@ -383,8 +538,14 @@ def train_xgboost(
 	xgb_params: Optional[dict] = None,
 	model_out: Optional[str] = None,
 	preds_out: Optional[str] = None,
-) -> Dict[str, Dict[str, float]]:
-	"""训练 XGBoost 回归并评估 train/val/test，返回各段指标；保存模型与预测。"""
+) -> Tuple[Dict[str, Dict[str, float]], Dict[str, pd.DataFrame]]:
+	"""训练 XGBoost 回归并评估 train/val/test，返回各段指标和预测数据。
+	
+	Returns:
+		(metrics_dict, predictions_dict)
+		- metrics_dict: {"train": {...}, "val": {...}, "test": {...}}
+		- predictions_dict: {"train": df_scores, "val": df_scores, "test": df_scores}
+	"""
 	from xgboost import XGBRegressor
 
 	xgb_params = xgb_params or {
@@ -427,6 +588,7 @@ def train_xgboost(
 
 	# 预测并评估
 	out = {}
+	preds_dict = {}  # 保存完整预测数据用于绘图
 	for split_name, split_idx in [
 		("train", train_idx),
 		("val", val_idx),
@@ -435,6 +597,7 @@ def train_xgboost(
 		pred = model.predict(X.loc[split_idx])
 		df_scores = pd.DataFrame({"pred": pred, "y": y.loc[split_idx].values}, index=split_idx)
 		out[split_name] = evaluate_predictions(df_scores)
+		preds_dict[split_name] = df_scores  # 保存预测数据
 
 	# 保存模型与预测（按 test 段）
 	if model_out:
@@ -469,7 +632,7 @@ def train_lightgbm(
 	test_mask: np.ndarray,
 	lgbm_params: Optional[dict] = None,
 	preds_out: Optional[str] = None,
-) -> Dict[str, Dict[str, float]]:
+) -> Tuple[Dict[str, Dict[str, float]], Dict[str, pd.DataFrame]]:
 	try:
 		from lightgbm import LGBMRegressor  # type: ignore
 	except Exception as e:
@@ -501,10 +664,12 @@ def train_lightgbm(
 	model.fit(X.loc[train_idx], y.loc[train_idx])
 
 	out = {}
+	preds_dict = {}
 	for split_name, split_idx in [("train", train_idx), ("val", val_idx), ("test", test_idx)]:
 		pred = model.predict(X.loc[split_idx])
 		df_scores = pd.DataFrame({"pred": pred, "y": y.loc[split_idx].values}, index=split_idx)
 		out[split_name] = evaluate_predictions(df_scores)
+		preds_dict[split_name] = df_scores
 
 	if preds_out:
 		os.makedirs(os.path.dirname(preds_out), exist_ok=True)
@@ -515,7 +680,7 @@ def train_lightgbm(
 		except Exception:
 			df_scores.to_csv(preds_out.replace(".parquet", ".csv"))
 
-	return out
+	return out, preds_dict
 
 
 def train_catboost(
@@ -527,7 +692,7 @@ def train_catboost(
 	test_mask: np.ndarray,
 	cb_params: Optional[dict] = None,
 	preds_out: Optional[str] = None,
-) -> Dict[str, Dict[str, float]]:
+) -> Tuple[Dict[str, Dict[str, float]], Dict[str, pd.DataFrame]]:
 	try:
 		from catboost import CatBoostRegressor  # type: ignore
 	except Exception as e:
@@ -556,10 +721,12 @@ def train_catboost(
 	model.fit(X.loc[train_idx], y.loc[train_idx])
 
 	out = {}
+	preds_dict = {}
 	for split_name, split_idx in [("train", train_idx), ("val", val_idx), ("test", test_idx)]:
 		pred = model.predict(X.loc[split_idx])
 		df_scores = pd.DataFrame({"pred": pred, "y": y.loc[split_idx].values}, index=split_idx)
 		out[split_name] = evaluate_predictions(df_scores)
+		preds_dict[split_name] = df_scores
 
 	if preds_out:
 		os.makedirs(os.path.dirname(preds_out), exist_ok=True)
@@ -570,7 +737,7 @@ def train_catboost(
 		except Exception:
 			df_scores.to_csv(preds_out.replace(".parquet", ".csv"))
 
-	return out
+	return out, preds_dict
 
 
 def main():
@@ -680,20 +847,20 @@ def main():
 
 	# 训练 & 评估 & 保存
 	if args.engine == "xgb":
-		metrics = train_xgboost(
+		metrics, predictions = train_xgboost(
 			X, y, sample_dates, train_mask, val_mask, test_mask,
 			xgb_params=None,
 			model_out=args.model_out,
 			preds_out=args.preds_out,
 		)
 	elif args.engine == "lgbm":
-		metrics = train_lightgbm(
+		metrics, predictions = train_lightgbm(
 			X, y, sample_dates, train_mask, val_mask, test_mask,
 			lgbm_params=None,
 			preds_out=args.preds_out.replace("test_preds", "test_preds_lgbm"),
 		)
 	else:  # catboost
-		metrics = train_catboost(
+		metrics, predictions = train_catboost(
 			X, y, sample_dates, train_mask, val_mask, test_mask,
 			cb_params=None,
 			preds_out=args.preds_out.replace("test_preds", "test_preds_catboost"),
@@ -719,6 +886,30 @@ def main():
 		f.write(pretty)
 
 	print(f"\n✅ Metrics saved to: {filename}")
+
+	# 计算并绘制净值曲线
+	print("\n[info] Computing equity curves...")
+	equity_data = {}
+	for split_name in ["train", "val", "test"]:
+		if split_name in predictions and len(predictions[split_name]) > 0:
+			equity_curve = compute_equity_curve(predictions[split_name], quantile=0.2)
+			if split_name not in equity_data:
+				equity_data[split_name] = {}
+			equity_data[split_name] = equity_curve
+
+	# 组织数据用于绘图（支持多模型对比）
+	model_equity_data = {args.engine.upper(): equity_data}
+
+	# 绘制净值曲线
+	equity_plot_path = os.path.join(THIS_DIR, "artifacts", f"equity_curve_{args.engine}.png")
+	plot_equity_curves(
+		model_equity_data,
+		train_end=args.train_end,
+		val_end=args.val_end,
+		save_path=equity_plot_path,
+	)
+
+	print(f"✅ All results saved!")
 
 
 if __name__ == "__main__":
