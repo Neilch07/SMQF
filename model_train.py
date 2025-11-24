@@ -140,10 +140,12 @@ def run_all_factors_and_rank_ic(
 	benchmark: Optional[str],
 	ic_horizon: int = 5,
 	persist_factors: bool = True,
+	ic_threshold: float = 0.0,
 ) -> Tuple[Dict[str, float], List[str]]:
 	"""全量运行因子并按 IC 排名。
 
 	返回 (因子->avg_ic 映射, 成功运行的因子名列表)。会根据 persist_factors 决定是否落盘。
+	支持通过 ic_threshold 筛选 abs(rank_ic) > threshold 的因子。
 	"""
 	klass_map = select_factor_classes(modules)
 	avg_ic_map: Dict[str, float] = {}
@@ -163,12 +165,16 @@ def run_all_factors_and_rank_ic(
 			f_obj.run(turnoff_display=True)
 			res = f_obj.get_performance()
 			avg_ic = float(res.get("avg_ic", np.nan))
+			# 应用 IC 阈值筛选：只保留 abs(rank_ic) > threshold 的因子
 			if np.isfinite(avg_ic):
-				avg_ic_map[name] = avg_ic
+				if abs(avg_ic) > ic_threshold:
+					avg_ic_map[name] = avg_ic
+				else:
+					print(f"[info] factor {name} filtered by IC threshold: abs({avg_ic:.4f}) <= {ic_threshold}")
 			ok_names.append(name)
 		except Exception as e:
 			print(f"[warn] factor {name} failed: {e}")
-			# print(traceback.format_exc())  # 完整错误信息（调试时启用）
+			# print(traceback.format_exc())  # 完整错误信息(调试时启用)
 			continue
 
 	return avg_ic_map, ok_names
@@ -585,6 +591,7 @@ def main():
 	parser.add_argument("--engine", type=str, choices=["xgb","lgbm","catboost"], default="xgb", help="选择训练模型框架")
 	parser.add_argument("--rank-ic", action="store_true", help="运行所有因子并输出 IC 排序 JSON")
 	parser.add_argument("--ic-horizon", type=int, default=5, help="用于 IC 排序的 horizon")
+	parser.add_argument("--ic-threshold", type=float, default=0.0, help="IC 阈值筛选：只保留 abs(rank_ic) > threshold 的因子")
 	parser.add_argument("--top-n", type=int, default=50, help="根据 IC 选择前 N 个因子用于训练")
 	parser.add_argument("--save-factor-json", type=str, default=os.path.join(THIS_DIR, "artifacts", "factor_ic_rank.json"))
 	parser.add_argument("--persist-factors", action="store_true", help="是否在因子框架内部触发保存")
@@ -600,7 +607,7 @@ def main():
 	# 如果需要先运行所有因子做 IC 排序
 	factor_names_final: List[str] = []
 	if args.rank_ic:
-		print("[info] Running all factors for IC ranking...")
+		print(f"[info] Running all factors for IC ranking (threshold: abs(IC) > {args.ic_threshold})...")
 		avg_ic_map, ok_names = run_all_factors_and_rank_ic(
 			modules=args.modules,
 			start_date=args.start_date,
@@ -609,6 +616,7 @@ def main():
 			benchmark=args.benchmark,
 			ic_horizon=args.ic_horizon,
 			persist_factors=args.persist_factors,
+			ic_threshold=args.ic_threshold,
 		)
 		# 排序并保存 JSON
 		sorted_items = sorted(avg_ic_map.items(), key=lambda kv: abs(kv[1]), reverse=True)
