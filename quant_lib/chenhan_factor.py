@@ -50,7 +50,7 @@ class vol_priceSum_rinv(factor):
     def set_factor_property(self):
         factor_property = {
             'factor_name': 'vol_priceSum_rinv',
-            'data_needed': ['volume', 'close', 'high', 'low', 'pct_change'],
+            'data_needed': ['volume', 'close', 'high', 'low', 'return'],
             'factor_type': 'market'
         }
         return factor_property
@@ -61,8 +61,8 @@ class vol_priceSum_rinv(factor):
         close = self.data.get('close')
         high = self.data.get('high')
         low = self.data.get('low')
-        pct = self.data.get('pct_change')
-        for name, df in [('volume', vol), ('close', close), ('high', high), ('low', low), ('pct_change', pct)]:
+        pct = self.data.get('return')
+        for name, df in [('volume', vol), ('close', close), ('high', high), ('low', low), ('return', pct)]:
             if df is None:
                 raise ValueError(f"vol_priceSum_rinv: required data '{name}' not found in self.data")
 

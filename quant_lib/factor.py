@@ -356,13 +356,20 @@ class factor():
 
     def calc_ic(self):
         n_horizon = self.params['ic_return_horizon']
-        factors=self.factor_data.shift(self.params['lag_periods'])
-        if n_horizon>1:
-            factors=factors.shift(n_horizon)
-        if n_horizon>1:
-            returns=self.returns.rolling(n_horizon,min_periods=int(n_horizon/2)).sum()
+        lag = self.params['lag_periods']
+
+        # Factor at time t-lag (available at time t for prediction)
+        factors = self.factor_data.shift(lag)
+
+        # Returns from t+1 onwards (future returns to predict)
+        # shift(-1) moves returns forward in time, so returns[t] = actual_return[t+1]
+        if n_horizon > 1:
+            # Sum of next n_horizon periods starting from t+1
+            returns = self.returns.shift(-1).rolling(n_horizon, min_periods=int(n_horizon/2)).sum()
         else:
-            returns=self.returns
+            # Next period return (t+1)
+            returns = self.returns.shift(-1)
+
         self.results['ic'] = factors.T.corrwith(returns.T, axis=0)
 
         self.results['avg_ic']=self.results['ic'].mean()
@@ -372,7 +379,9 @@ class factor():
         self.results['anual_icir']=np.sqrt(self.params['n_trading_days']/self.params['ic_return_horizon'])*self.results['icir']
 
         if self.params['ir_details'] == True:
-            ranking = self.ranking.shift(n_horizon)
+            # self.ranking is already shifted by lag, aligned with factors
+            # No additional shift needed since returns are already shifted forward
+            ranking = self.ranking.shift(lag)
             return_ranking = returns.rank(axis=1, pct=True)
             self.results['rank_ic'] = ranking.T.corrwith(return_ranking.T, axis=0)
             factors_long = factors.where(ranking>0.5,other=np.nan,inplace=False)
