@@ -207,24 +207,37 @@ def build_ml_dataset(
 	horizon: int = 5,
 	zscore: bool = True,
 	clip: float = 5.0,
-) -> Tuple[pd.DataFrame, pd.Series, pd.DatetimeIndex]:
+	label_type: str = "cumulative",
+) -> Tuple[pd.DataFrame, pd.Series, pd.DatetimeIndex, str]:
 	"""构建监督学习数据集。
 
 	- X: 行为 (date,ticker) 的样本，列为各因子
-	- y: 目标为未来 horizon 日累计收益
+	- y: 目标标签（根据 label_type 决定）
 	- dates: 样本对应的日期索引（方便按时间切分）
+	- label_name: 标签名称（用于输出识别）
 
 	⚠️ 时序逻辑说明（重要）：
 	1. 特征 X(t): 使用 t 日收盘时刻可获得的因子值（基于 t 日及之前的数据）
-	2. 标签 y(t): 使用 shift(-1) 然后 rolling(horizon).sum() 获取 [t+1, t+horizon] 的未来收益
-	   - 原因：t 日收盘时我们无法获得 t 日的收益（需要等收盘结算）
-	   - 因此只能预测并使用 t+1 日开始的未来收益
-	   - 实际交易：t 日收盘前下单 → t+1 日开盘成交 → 获得 [t+1, t+horizon] 收益
-	   - 正确方法：ret.shift(-1).rolling(horizon).sum()
-	     * shift(-1): 将 t+1 日的收益移到 t 日位置
-	     * rolling(horizon).sum(): 计算从当前位置开始的 horizon 日累计收益
-	     * 结果：t 日位置得到 [t+1, ..., t+horizon] 的收益 ✅
-	3. 这样可以避免使用未来信息（look-ahead bias），确保逻辑正确 ✅
+	2. 标签 y(t): 根据 label_type 计算不同类型的预测标签
+	   
+	   【标签类型】：
+	   - "cumulative" (默认): [t+1, t+horizon] 累计收益
+	     * 计算：ret.shift(-1).rolling(horizon).sum()
+	     * 含义：t+1 到 t+horizon 的总收益
+	   
+	   - "ret#2": t+2 / t+1 的收益比率
+	     * 计算：ret.shift(-2) / ret.shift(-1)
+	     * 含义：第2天收益相对第1天收益的倍数
+	   
+	   - "ret#5": t+5 / t+1 的收益比率
+	     * 计算：ret.shift(-5) / ret.shift(-1)
+	     * 含义：第5天收益相对第1天收益的倍数
+	   
+	   - "ret#20": t+20 / t+1 的收益比率
+	     * 计算：ret.shift(-20) / ret.shift(-1)
+	     * 含义：第20天收益相对第1天收益的倍数
+	   
+	   - 共同特点：所有标签都基于未来信息（t+1及以后），避免look-ahead bias ✅
 
 	WARNING: zscore 正规化应在 train/val/test 分离后进行（防止 data leakage）
 	"""
@@ -234,10 +247,30 @@ def build_ml_dataset(
 	aligned_features = aligned[:-1]
 	ret = aligned[-1]
 
-	# 目标：未来 horizon 日累计收益
-	# ✅ 修正：先 shift(-1) 跳过 t 日，再 rolling sum，确保 t 日的 y 标签是真正的 [t+1, t+horizon] 收益
-	# 原代码 bug: rolling().sum().shift(-h) 会导致 t 日用到 [t-h+1, t] 的收益（look-ahead bias）
-	future_y = ret.shift(-1).rolling(horizon, min_periods=horizon).sum()
+	# 根据 label_type 计算目标标签
+	if label_type == "cumulative":
+		# 累计收益：[t+1, t+horizon]
+		future_y = ret.shift(-1).rolling(horizon, min_periods=horizon).sum()
+		label_name = f"ret_cumsum_{horizon}d"
+	
+	elif label_type == "ret#2":
+		# t+2 / t+1 收益比率
+		future_y = ret.shift(-2) / ret.shift(-1).replace(0, np.nan)
+		label_name = "ret#2"
+	
+	elif label_type == "ret#5":
+		# t+5 / t+1 收益比率
+		future_y = ret.shift(-5) / ret.shift(-1).replace(0, np.nan)
+		label_name = "ret#5"
+	
+	elif label_type == "ret#20":
+		# t+20 / t+1 收益比率
+		future_y = ret.shift(-20) / ret.shift(-1).replace(0, np.nan)
+		label_name = "ret#20"
+	
+	else:
+		raise ValueError(f"Unknown label_type: {label_type}. "
+						 f"Supported: cumulative, ret#2, ret#5, ret#20")
 
 	# 交集日期/股票
 	idx = aligned_features[0].index
@@ -266,12 +299,9 @@ def build_ml_dataset(
 	X = data.drop(columns=["y"])  # type: ignore
 	y = data["y"]  # type: ignore
 
-	# ⚠️ Z-score는 여기서 하지 않음 - train/val/test 분리 후에 수행
-	# (data leakage 방지)
-
 	# 从 MultiIndex 中提取日期（level='date' 或 level=0）
 	sample_dates = X.index.get_level_values('date')
-	return X, y, pd.DatetimeIndex(sample_dates.unique()), zscore, clip
+	return X, y, pd.DatetimeIndex(sample_dates.unique()), label_name
 
 
 def normalize_with_train_stats(
@@ -761,7 +791,10 @@ def main():
 	parser.add_argument("--end-date", type=str, default=None)
 	parser.add_argument("--universe", type=str, default="top75pct")
 	parser.add_argument("--benchmark", type=str, default=None)
-	parser.add_argument("--horizon", type=int, default=5)
+	parser.add_argument("--horizon", type=int, default=5, help="预测期限（仅用于cumulative标签）")
+	parser.add_argument("--label", type=str, default="cumulative", 
+						choices=["cumulative", "ret#2", "ret#5", "ret#20"],
+						help="预测标签类型: cumulative=[t+1,t+h]累计, ret#2=t+2/t+1, ret#5=t+5/t+1, ret#20=t+20/t+1")
 	parser.add_argument("--train-end", type=str, default="2021-12-31")
 	parser.add_argument("--val-end", type=str, default="2022-12-31")
 	parser.add_argument("--no-zscore", action="store_true")
@@ -853,25 +886,27 @@ def main():
 	)
 
 	# 构建 ML 数据集
-	X, y, sample_dates, do_zscore, clip_val = build_ml_dataset(
+	X, y, sample_dates, label_name = build_ml_dataset(
 		features,
 		returns,
 		horizon=args.horizon,
 		zscore=(not args.no_zscore),
+		label_type=args.label,
 	)
+	print(f"[info] Using label: {label_name}")
 
 	# 按时间切分
 	train_mask, val_mask, test_mask = time_split_indices(sample_dates, args.train_end, args.val_end)
 
-	# Data Leakage 방지: Train 통계량만 사용하여 정규화
-	if do_zscore:
+	# Data Leakage 防止: Train 统计量规范化
+	if not args.no_zscore:
 		print("[info] Normalizing with train-only statistics (preventing data leakage)...")
 		date_level = X.index.get_level_values(0)
 		map_train = pd.Series(train_mask, index=sample_dates)
 		train_row_mask = map_train.reindex(date_level).to_numpy()
 		train_idx = X.index[train_row_mask]
 
-		X = normalize_with_train_stats(X, train_idx, clip=clip_val)
+		X = normalize_with_train_stats(X, train_idx, clip=5.0)
 
 	# 训练 & 评估 & 保存
 	if args.engine == "xgb":
@@ -934,6 +969,8 @@ def main():
 		"engine": args.engine,
 		"num_factors": len(klass_map),
 		"factor_names": sorted(list(klass_map.keys())),
+		"label_type": args.label,
+		"label_name": label_name,
 		"horizon": args.horizon,
 		"train_end": args.train_end,
 		"val_end": args.val_end,
