@@ -268,7 +268,7 @@ def normalize_with_train_stats(
 	# Train 데이터만 추출
 	X_train = X.loc[train_idx]
 
-	# Train 데이터의 날짜별 mean/std 계산
+	# cross-sectional normalization
 	train_stats = X_train.groupby(level='date').agg(['mean', 'std'])
 
 	# 전체 데이터를 날짜별로 정규화
@@ -358,7 +358,7 @@ def evaluate_predictions(
 		top_ret = g.loc[ranks >= (1 - q), "y"].mean()
 		bot_ret = g.loc[ranks <= q, "y"].mean()
 		if np.isfinite(top_ret) and np.isfinite(bot_ret):
-			ls_daily.append(float((top_ret - bot_ret) / 2.0))
+			ls_daily.append(float((top_ret - bot_ret)))
 	ls_daily = np.array(ls_daily, dtype=float)
 	ann_ret = float(243 * np.nanmean(ls_daily)) if ls_daily.size else np.nan
 	ann_vol = float(np.sqrt(243) * np.nanstd(ls_daily)) if ls_daily.size else np.nan
