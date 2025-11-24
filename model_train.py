@@ -49,8 +49,9 @@ def discover_factor_classes(module_name: str) -> Dict[str, type]:
 		if isinstance(v, type):
 			try:
 				if v is not base_factor and issubclass(v, base_factor):
-					# 过滤内部/测试类（以 alpha 开头的为主）
-					if str(k).startswith("alpha"):
+					# 过滤内部/测试类
+					# 接受 alpha 开头的，以及 vol_, ret_, std_ 等自定义因子
+					if str(k).startswith("alpha") or any(str(k).startswith(prefix) for prefix in ['vol_', 'ret_', 'std_']):
 						classes[k] = v
 			except TypeError:
 				pass
@@ -205,7 +206,9 @@ def build_ml_dataset(
 
 	- X: 行为 (date,ticker) 的样本，列为各因子
 	- y: 目标为未来 horizon 日累计收益
-	- dates: 样本对应的日期索引（方便按时间切分）
+	- dates: 样본对응의 날짜 索引（方便按时间切分）
+
+	WARNING: zscore 정규화는 train/val/test 분리 후에 수행해야 함 (data leakage 방지)
 	"""
 	# 对齐所有特征与收益面板
 	panels = list(features.values()) + [returns]
@@ -237,25 +240,67 @@ def build_ml_dataset(
 	X = data.drop(columns=["y"])  # type: ignore
 	y = data["y"]  # type: ignore
 
-	# 可选：日内截面标准化与裁剪（降低量纲差异与极值影响）
-	if zscore:
-		# 根据 (date,ticker) 的多重索引，level='date' 或 level=0 是日期
-		# 逐日 zscore
-		def _z(df: pd.DataFrame) -> pd.DataFrame:
-			mu = df.mean(axis=0)
-			sd = df.std(axis=0)
-			sd = sd.replace(0, np.nan)
-			z = (df - mu) / sd
-			if clip is not None:
-				z = z.clip(lower=-clip, upper=clip)
-			return z
-
-		# 按日期分组进行标准化
-		X = X.groupby(level='date').apply(lambda g: _z(g.droplevel('date')))
+	# ⚠️ Z-score는 여기서 하지 않음 - train/val/test 분리 후에 수행
+	# (data leakage 방지)
 
 	# 从 MultiIndex 中提取日期（level='date' 或 level=0）
 	sample_dates = X.index.get_level_values('date')
-	return X, y, pd.DatetimeIndex(sample_dates.unique())
+	return X, y, pd.DatetimeIndex(sample_dates.unique()), zscore, clip
+
+
+def normalize_with_train_stats(
+	X: pd.DataFrame,
+	train_idx: pd.Index,
+	clip: float = 5.0
+) -> pd.DataFrame:
+	"""Train 데이터의 통계량만 사용하여 정규화 (Data Leakage 방지)
+
+	Args:
+		X: 전체 데이터 (date, ticker) MultiIndex
+		train_idx: Training 데이터의 인덱스
+		clip: Z-score 클리핑 값
+
+	Returns:
+		정규화된 X
+	"""
+	X_norm = X.copy()
+
+	# Train 데이터만 추출
+	X_train = X.loc[train_idx]
+
+	# Train 데이터의 날짜별 mean/std 계산
+	train_stats = X_train.groupby(level='date').agg(['mean', 'std'])
+
+	# 전체 데이터를 날짜별로 정규화
+	for date in X.index.get_level_values('date').unique():
+		date_mask = X.index.get_level_values('date') == date
+
+		if date in train_stats.index:
+			# Train 기간 내: 해당 날짜의 통계량 사용
+			stats = train_stats.loc[date]
+		else:
+			# Val/Test 기간: 가장 가까운 과거 Train 날짜의 통계량 사용
+			# (미래 정보 사용 안함!)
+			past_dates = train_stats.index[train_stats.index <= date]
+			if len(past_dates) > 0:
+				stats = train_stats.loc[past_dates[-1]]
+			else:
+				# Train 이전 날짜: 정규화 스킵
+				continue
+
+		# 정규화 적용
+		for col in X.columns:
+			mean_val = stats[(col, 'mean')]
+			std_val = stats[(col, 'std')]
+
+			if std_val > 0:
+				X_norm.loc[date_mask, col] = (X.loc[date_mask, col] - mean_val) / std_val
+
+	# 클리핑
+	if clip is not None:
+		X_norm = X_norm.clip(lower=-clip, upper=clip)
+
+	return X_norm
 
 
 def time_split_indices(
@@ -524,7 +569,7 @@ def train_catboost(
 
 def main():
 	parser = argparse.ArgumentParser(description="Train XGBoost on project factors")
-	parser.add_argument("--modules", nargs="*", default=["alpha101", "gtja191","chenhan_factor"], help="factor modules to use")
+	parser.add_argument("--modules", nargs="*", default=["alpha101", "gtja191", "chenhan_factor"], help="factor modules to use")
 	parser.add_argument("--include", nargs="*", default=[], help="explicit factor class names to include")
 	parser.add_argument("--exclude", nargs="*", default=[], help="factor class names to exclude")
 	parser.add_argument("--start-date", type=str, default=None)
@@ -541,7 +586,6 @@ def main():
 	parser.add_argument("--rank-ic", action="store_true", help="运行所有因子并输出 IC 排序 JSON")
 	parser.add_argument("--ic-horizon", type=int, default=5, help="用于 IC 排序的 horizon")
 	parser.add_argument("--top-n", type=int, default=50, help="根据 IC 选择前 N 个因子用于训练")
-	parser.add_argument("--ic-threshold", type=float, default=None, help="IC阈值筛选：只保留 abs(avg_ic) > 该阈值的因子（优先级高于 top-n）")
 	parser.add_argument("--save-factor-json", type=str, default=os.path.join(THIS_DIR, "artifacts", "factor_ic_rank.json"))
 	parser.add_argument("--persist-factors", action="store_true", help="是否在因子框架内部触发保存")
 
@@ -572,22 +616,15 @@ def main():
 		with open(args.save_factor_json, "w", encoding="utf-8") as f:
 			json.dump({"avg_ic": sorted_items, "all_run": ok_names}, f, ensure_ascii=False, indent=2)
 		print(f"[info] IC ranking saved -> {args.save_factor_json}")
-		
-		# IC阈值筛选（优先级高于 top-n）
-		if args.ic_threshold is not None:
-			factor_names_final = [name for name, ic in sorted_items if abs(ic) > args.ic_threshold]
-			print(f"[info] IC threshold filter (abs(IC) > {args.ic_threshold}): {len(factor_names_final)} factors passed")
-		else:
-			# 取前 top-n
-			factor_names_final = [name for name,_ in sorted_items[:args.top_n]]
-		
-		# 若用户未指定 include 则用筛选后的因子
+		# 取前 top-n
+		factor_names_final = [name for name,_ in sorted_items[:args.top_n]]
+		# 若用户未指定 include 则用 top-n
 		if not args.include:
 			args.include = factor_names_final
 		else:
-			# 用户已指定 include，则与筛选结果做交集增强可复用性
+			# 用户已指定 include，则与 top-n 做交集增强可复用性
 			args.include = [nm for nm in args.include if nm in factor_names_final]
-		print(f"[info] Selected {len(args.include)} factors for training: {args.include[:10]}{'...' if len(args.include)>10 else ''}")
+		print(f"[info] Selected top {len(args.include)} factors for training: {args.include[:10]}{'...' if len(args.include)>10 else ''}")
 		
 		# 清理导入的模块，强制重新加载
 		import importlib
@@ -613,7 +650,7 @@ def main():
 	)
 
 	# 构建 ML 数据集
-	X, y, sample_dates = build_ml_dataset(
+	X, y, sample_dates, do_zscore, clip_val = build_ml_dataset(
 		features,
 		returns,
 		horizon=args.horizon,
@@ -622,6 +659,16 @@ def main():
 
 	# 按时间切分
 	train_mask, val_mask, test_mask = time_split_indices(sample_dates, args.train_end, args.val_end)
+
+	# Data Leakage 방지: Train 통계량만 사용하여 정규화
+	if do_zscore:
+		print("[info] Normalizing with train-only statistics (preventing data leakage)...")
+		date_level = X.index.get_level_values(0)
+		map_train = pd.Series(train_mask, index=sample_dates)
+		train_row_mask = map_train.reindex(date_level).to_numpy()
+		train_idx = X.index[train_row_mask]
+
+		X = normalize_with_train_stats(X, train_idx, clip=clip_val)
 
 	# 训练 & 评估 & 保存
 	if args.engine == "xgb":
@@ -647,10 +694,23 @@ def main():
 	# 打印结果并保存指标
 	pretty = json.dumps(metrics, ensure_ascii=False, indent=2)
 	print(pretty)
-	out_path = os.path.join(THIS_DIR, "artifacts", f"metrics_{args.engine}.json")
+
+	# 파일명에 요인 수, 학습 기간 포함
+	num_factors = len(klass_map)
+	train_period = args.train_end.replace('-', '')
+	val_period = args.val_end.replace('-', '')
+	filename = f"metrics_{args.engine}_top{num_factors}_train{train_period}_val{val_period}.json"
+	out_path = os.path.join(THIS_DIR, "artifacts", filename)
 	os.makedirs(os.path.dirname(out_path), exist_ok=True)
 	with open(out_path, "w", encoding="utf-8") as f:
 		f.write(pretty)
+
+	# 기존 호환성을 위해 간단한 파일명도 유지
+	simple_path = os.path.join(THIS_DIR, "artifacts", f"metrics_{args.engine}.json")
+	with open(simple_path, "w", encoding="utf-8") as f:
+		f.write(pretty)
+
+	print(f"\n✅ Metrics saved to: {filename}")
 
 
 if __name__ == "__main__":
