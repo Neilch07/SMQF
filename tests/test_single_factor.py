@@ -37,6 +37,7 @@ try:
         print(f"  {key}: shape = {f_obj.data[key].shape}")
 except Exception as e:
     import traceback
+
     print(f"Error loading data: {e}")
     traceback.print_exc()
 
@@ -47,5 +48,6 @@ try:
     print("Factor data shape:", f_obj.factor_data.shape)
 except Exception as e:
     import traceback
+
     print(f"Error calculating factor: {e}")
     traceback.print_exc()
