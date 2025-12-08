@@ -1,310 +1,195 @@
 # SMQF - Systematic Multi-factor Quantitative Finance
 
-A professional quantitative trading system with multi-factor models, backtesting, and optimization tools.
+A professional quantitative trading system with multi-factor models and ML-based predictions.
 
 ---
 
-## 🎯 Quick Start
+## Quick Start
 
-### 1. Train a Model (Recommended)
+> 📖 详细使用说明请查看 **[USAGE.md](USAGE.md)**
+
+### Test a Single Factor
 
 ```bash
-# Basic training with optimization
-python model_train_optimized.py \
-    --modules alpha101 gtja191 chenhan_factor \
+# Test vol_std20 factor
+python test_vol_std20.py
+```
+
+### Train a Model
+
+```bash
+# 使用所有因子库（alpha101, gtja191, chenhan_factor）
+# 默认就会使用全部三个因子库
+python model_train.py \
     --engine xgb \
     --label cumulative \
-    --horizon 5 \
-    --n-jobs 4
+    --horizon 5
 
-# Production training with IC ranking
-python model_train_optimized.py \
+# 使用 Rank IC 筛选最佳因子（推荐）
+python model_train.py \
     --rank-ic \
+    --ic-metric rank_ic \
     --ic-threshold 0.02 \
     --top-n 30 \
-    --n-jobs 6 \
-    --run-name "production"
+    --engine xgb
+
+# 使用 IC 筛选因子
+python model_train.py \
+    --rank-ic \
+    --ic-metric ic \
+    --ic-threshold 0.005 \
+    --top-n 30 \
+    --engine xgb
 ```
 
-### 2. Run Backtest
-
-```bash
-# Strategy backtest
-python backtest_strategy.py
-
-# Rolling backtest
-python rolling_backtest.py
-```
-
-### 3. List Available Factors
-
-```bash
-# Show all factors
-python scripts/list_factors.py
-
-# Create new factors
-python scripts/create_factors.py
-```
+> 💡 更多示例和参数说明，请参考 **[USAGE.md](USAGE.md)**
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 SMQF/
-├── README.md                      # This file
+├── README.md                # 项目说明
+├── USAGE.md                 # 详细使用指南
+├── test_vol_std20.py        # 因子测试示例
+├── model_train.py           # 模型训练
 │
-├── Core Scripts                   # Main execution scripts
-│   ├── model_train_optimized.py   # ⭐ Model training (optimized)
-│   ├── backtest_strategy.py       # Strategy backtesting
-│   ├── rolling_backtest.py        # Rolling window backtest
-│   └── numexpr.py                 # numpy 2.x compatibility
+├── quant_lib/               # Factor library
+│   ├── factor.py
+│   ├── alpha101.py          # 101 alpha factors
+│   ├── gtja191.py           # 191 GTJA factors
+│   ├── chenhan_factor.py    # Custom factors
+│   └── analysis.py
 │
-├── scripts/                       # Utility scripts
-│   ├── create_factors.py          # Create new factors
-│   ├── list_factors.py            # List available factors
-│   └── cleanup_useless_files.sh   # Clean cache files
+├── scripts/
+│   ├── list_factors.py
+│   └── create_factors.py
 │
-├── tests/                         # Test files
-│   ├── test_all_factors_simple.py # Test all factors
-│   ├── test_single_factor.py      # Test single factor
-│   └── test_amount_factor.py      # Test amount-based factors
+├── tests/
+│   ├── test_vol_std20.py        # Test vol_std20 factor
+│   ├── test_all_factors_simple.py
+│   └── test_single_factor.py
 │
-├── docs/                          # Documentation
-│   ├── QUICK_START_GUIDE.md       # Quick start guide
-│   ├── OPTIMIZATION_REPORT.md     # Optimization details
-│   ├── COMPARISON_SUMMARY.md      # Before/after comparison
-│   ├── BACKTEST_README.md         # Backtest documentation
-│   └── README_model_train.md      # Training documentation
-│
-├── archive/                       # Archived old files
-│   ├── model_train.py             # Original training script
-│   └── ...                        # Other deprecated files
-│
-├── quant_lib/                     # 📦 Core factor library (DO NOT TOUCH)
-│   ├── factor.py                  # Base factor class
-│   ├── alpha101.py                # 101 alpha factors
-│   ├── gtja191.py                 # 191 GTJA factors
-│   ├── chenhan_factor.py          # Custom factors
-│   └── analysis.py                # Analysis tools
-│
-├── data/                          # Data storage
-│   └── cn/equity/                 # Chinese equity data
-│
-└── runs/                          # Training outputs
-    └── run_xgb_*/                 # Individual run results
+├── data/cn/equity/          # Market data
+├── runs/                    # Training outputs
+└── archive/                 # Old files
 ```
 
 ---
 
-## 🚀 Main Features
+## Features
 
-### ✅ Model Training
-- **Optimized Training Pipeline** - 2-4x faster with parallel computation
-- **IC Ranking** - Automatic factor selection based on IC
+### Model Training
+- **Fast Training** - Multi-core parallel processing (自动使用全部CPU)
+- **IC/Rank IC Ranking** - 支持 IC 或 Rank IC 自动选择最佳因子
 - **Multiple Engines** - XGBoost, LightGBM, CatBoost
 - **No Data Leakage** - Strict time-series validation
-- **Memory Efficient** - 30-50% memory savings
+- **All Factor Libraries** - 默认使用所有因子库（alpha101 + gtja191 + chenhan_factor）
 
-### ✅ Factor Library
+### Factor Library
 - **101 Alpha Factors** (WorldQuant alpha101)
 - **191 GTJA Factors** (国泰君安)
 - **Custom Factors** (chenhan_factor)
-- **Extensible Framework** - Easy to add new factors
-
-### ✅ Backtesting
-- **Strategy Backtesting** - Test trading strategies
-- **Rolling Window** - Time-series cross-validation
-- **Performance Metrics** - IC, IR, Sharpe, etc.
+- Easy to extend
 
 ---
 
-## 📊 Performance
+## Usage Examples
 
-| Metric | Value |
-|--------|-------|
-| **Training Speed** | 2-4x faster (with --n-jobs) |
-| **Memory Usage** | 30-50% reduction |
-| **Data Leakage** | ✅ 100% prevented |
-| **Test IC** | ~0.04 (stable) |
-| **Annual IR** | ~0.8 (out-of-sample) |
-
----
-
-## 🔧 Usage Examples
-
-### Train with Different Labels
+### Different Labels
 
 ```bash
-# Cumulative return
-python model_train_optimized.py --label cumulative --horizon 5
+# Cumulative return [t+1, t+5]
+python model_train.py --label cumulative --horizon 5
 
-# Momentum ratio
-python model_train_optimized.py --label "ret#5"
+# Return ratio t+2/t+1
+python model_train.py --label "ret#2"
 
-# Long-term ratio
-python model_train_optimized.py --label "ret#20"
+# Return ratio t+5/t+1
+python model_train.py --label "ret#5"
+
+# Return ratio t+20/t+1
+python model_train.py --label "ret#20"
 ```
 
-### Compare Engines
+### Different Engines
 
 ```bash
-# XGBoost (fastest)
-python model_train_optimized.py --engine xgb --n-jobs 4
+# XGBoost (推荐)
+python model_train.py --engine xgb
 
-# LightGBM (memory efficient)
-python model_train_optimized.py --engine lgbm --n-jobs 4
+# LightGBM
+python model_train.py --engine lgbm
 
-# CatBoost (highest accuracy)
-python model_train_optimized.py --engine catboost --n-jobs 4
+# CatBoost
+python model_train.py --engine catboost
 ```
 
-### Test Factors
+### IC Metric Selection
 
 ```bash
-# Test all factors
-cd tests
-python test_all_factors_simple.py
+# 使用 Rank IC 筛选（默认，推荐）
+python model_train.py \
+    --rank-ic \
+    --ic-metric rank_ic \
+    --ic-threshold 0.02 \
+    --top-n 50
 
-# Test single factor
-python test_single_factor.py
-
-# Test amount-based factors
-python test_amount_factor.py
+# 使用 IC 筛选
+python model_train.py \
+    --rank-ic \
+    --ic-metric ic \
+    --ic-threshold 0.005 \
+    --top-n 50
 ```
 
----
-
-## 📚 Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Quick Start Guide](docs/QUICK_START_GUIDE.md) | Fast introduction and examples |
-| [Optimization Report](docs/OPTIMIZATION_REPORT.md) | Technical optimization details |
-| [Comparison Summary](docs/COMPARISON_SUMMARY.md) | Before/after comparison |
-| [Backtest README](docs/BACKTEST_README.md) | Backtesting documentation |
-| [Training README](docs/README_model_train.md) | Model training guide |
-
----
-
-## 🛠️ Maintenance
-
-### Clean Cache Files
+### List Factors
 
 ```bash
-# Run cleanup script
-bash scripts/cleanup_useless_files.sh
-```
-
-### List Available Factors
-
-```bash
-# Show all factors with details
 python scripts/list_factors.py
 ```
 
-### Create New Factors
-
-```bash
-# Create factor template
-python scripts/create_factors.py
-```
-
 ---
 
-## ⚠️ Important Notes
+## Workflow
 
-### 🔒 DO NOT MODIFY
-- **quant_lib/** - Core factor library
-- **data/** - Data files
-- **numexpr.py** - Compatibility layer
+1. **Test a factor** (optional)
+   ```bash
+   python test_vol_std20.py
+   ```
 
-### ✅ Safe to Modify
-- Training parameters in `model_train_optimized.py`
-- Backtest strategies in `backtest_strategy.py`
-- Custom factors (add to `quant_lib/chenhan_factor.py`)
-
-### 🗑️ Archive Folder
-- Contains old/deprecated files
-- Safe to delete after 7 days of testing
-- Kept for reference and rollback
-
----
-
-## 🎯 Recommended Workflow
-
-1. **List factors**
+2. **List available factors**
    ```bash
    python scripts/list_factors.py
    ```
 
-2. **Test factors** (optional)
+3. **Train model with Rank IC ranking**
    ```bash
-   cd tests && python test_all_factors_simple.py
-   ```
-
-3. **Train model with IC ranking**
-   ```bash
-   python model_train_optimized.py \
+   python model_train.py \
        --rank-ic \
+       --ic-metric rank_ic \
        --ic-threshold 0.02 \
        --top-n 30 \
-       --n-jobs 6
+       --engine xgb
    ```
 
-4. **Backtest strategy**
-   ```bash
-   python backtest_strategy.py
-   ```
-
-5. **Analyze results**
-   - Check `runs/run_*_*/metrics.json`
-   - View `runs/run_*_*/equity_curve.png`
+4. **Check results**
+   - Metrics: `runs/run_*/metrics.json`
+   - Equity curve: `runs/run_*/equity_curve.png`
 
 ---
 
-## 🐛 Troubleshooting
+## Important Notes
 
-### Out of Memory
-```bash
-# Reduce parallel workers
-python model_train_optimized.py --n-jobs 2
+### DO NOT MODIFY
+- `quant_lib/` - Core factor library
+- `data/` - Market data
 
-# Or reduce factor count
-python model_train_optimized.py --top-n 20
-```
-
-### Slow IC Ranking
-```bash
-# Use parallel computation
-python model_train_optimized.py --rank-ic --n-jobs 6
-```
-
-### Import Errors
-```bash
-# Clean cache and restart
-bash scripts/cleanup_useless_files.sh
-```
+### Safe to Modify
+- Training parameters
+- Custom factors in `quant_lib/chenhan_factor.py`
 
 ---
 
-## 📝 Version History
-
-- **v2.0** (2025-11-25) - Optimized version with parallelization
-- **v1.0** (2024) - Initial version
-
----
-
-## 📄 License
-
-Internal use only. Do not distribute without permission.
-
----
-
-## 👤 Author
-
-SAIF Quantitative Research Team
-
----
-
-*Last Updated: 2025-11-25*
+*SAIF Quantitative Research Team*
