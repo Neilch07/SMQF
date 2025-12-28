@@ -92,57 +92,84 @@ class GPFactor(factor):
         """
         计算因子值
 
-        临时实现：使用简单的随机因子组合来测试整个框架
-        这样可以验证GA、评价、保存等所有其他功能是否正常
+        真正执行GP表达式来生成因子值
         """
         try:
-            # 根据表达式生成不同的简单因子
-            # 这里使用表达式的字符串哈希来生成"伪随机"但可重复的因子
+            # 编译GP表达式为可执行函数
+            func = gp.compile(expr=self.individual, pset=self.pset)
 
-            expr_str = str(self.individual)
-            hash_val = abs(hash(expr_str)) % 10
-
-            # 根据哈希值选择不同的简单因子
-            if 'close' in self.data:
-                if hash_val == 0:
-                    result = -self.data['close'].rolling(20).std()
-                elif hash_val == 1:
-                    result = -self.data['close'].rolling(10).std()
-                elif hash_val == 2:
-                    result = self.data['close'].pct_change(20, fill_method=None)
-                elif hash_val == 3:
-                    result = -self.data['close'].rolling(5).mean() / self.data['close'].rolling(20).mean()
-                elif hash_val == 4 and 'volume' in self.data:
-                    result = -self.data['volume'].rolling(20).std()
-                elif hash_val == 5 and 'volume' in self.data:
-                    result = self.data['volume'].pct_change(10, fill_method=None)
-                elif hash_val == 6:
-                    result = -(self.data['close'] / self.data['close'].shift(20))
-                elif hash_val == 7:
-                    result = self.data['close'].rolling(20).rank(pct=True)
-                elif hash_val == 8:
-                    result = -self.data['close'].ewm(span=20).std()
+            # 准备参数列表，按照pset中参数的顺序
+            # pset.arguments是参数名列表（安全名称），按照它们在pset中定义的顺序
+            # 需要将安全名称映射回原始字段名来查找数据
+            args = []
+            for arg_name in self.pset.arguments:
+                # 尝试获取原始字段名（如果pset保存了映射的话）
+                if hasattr(self.pset, '_safe_field_names') and hasattr(self.pset, '_original_field_names'):
+                    # 找到对应的原始字段名
+                    try:
+                        idx = self.pset._safe_field_names.index(arg_name)
+                        original_field = self.pset._original_field_names[idx]
+                    except (ValueError, IndexError):
+                        # 如果找不到，尝试使用反向映射
+                        from gp_primitives import get_original_field_name
+                        original_field = get_original_field_name(arg_name)
                 else:
-                    result = -self.data['close'].rolling(60).std()
-            else:
-                result = pd.DataFrame()
+                    # 如果pset没有保存映射，尝试使用反向映射函数
+                    from gp_primitives import get_original_field_name
+                    original_field = get_original_field_name(arg_name)
+
+                # 使用原始字段名查找数据
+                if original_field in self.data:
+                    args.append(self.data[original_field])
+                elif arg_name in self.data:
+                    # 回退：尝试使用安全字段名
+                    args.append(self.data[arg_name])
+                else:
+                    # 如果数据中没有这个字段，使用close作为默认值
+                    # 或者创建一个全零的DataFrame
+                    if 'close' in self.data:
+                        args.append(pd.DataFrame(
+                            0.0,
+                            index=self.data['close'].index,
+                            columns=self.data['close'].columns
+                        ))
+                    else:
+                        raise ValueError(f"Required data field '{arg_name}' (original: '{original_field}') not found in data")
+
+            # 执行GP函数（传入位置参数）
+            result = func(*args)
 
             # 确保结果是DataFrame
             if not isinstance(result, pd.DataFrame):
-                raise ValueError(f"GP expression returned non-DataFrame type: {type(result)}")
+                # 如果是Series，转为DataFrame
+                if isinstance(result, pd.Series):
+                    result = result.to_frame()
+                # 如果是标量，广播到DataFrame
+                elif isinstance(result, (int, float)):
+                    if 'close' in self.data:
+                        result = pd.DataFrame(
+                            result,
+                            index=self.data['close'].index,
+                            columns=self.data['close'].columns
+                        )
+                    else:
+                        result = pd.DataFrame()
+                else:
+                    raise ValueError(f"GP expression returned unexpected type: {type(result)}")
 
             # 处理NaN和Inf
             result = result.replace([np.inf, -np.inf], np.nan)
 
-            # 简单填充NaN（使用前向填充）
+            # 填充NaN：使用前向填充，然后用0填充剩余的NaN
             result = result.ffill().fillna(0)
 
             # 保存因子数据
             self.factor_data = result
 
         except Exception as e:
-            # 如果计算失败，返回全零的DataFrame（而不是NaN）
+            # 如果计算失败，返回全零的DataFrame
             print(f"Error in calc_factor: {e}")
+            print(f"Expression: {str(self.individual)}")
             import traceback
             traceback.print_exc()
 

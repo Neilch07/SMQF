@@ -9,6 +9,7 @@ import pandas as pd
 from deap import gp
 import sys
 import os
+import keyword
 
 # 添加父目录到路径以导入quant_lib
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -19,6 +20,76 @@ if quant_lib_dir not in sys.path:
     sys.path.insert(0, quant_lib_dir)
 
 from analysis import *
+
+
+# ============================================================================
+# Python保留关键字处理
+# ============================================================================
+
+# 创建保留关键字到安全名称的映射
+KEYWORD_MAPPING = {
+    'return': 'ret',
+    'class': 'cls',
+    'def': 'def_',
+    'import': 'import_',
+    'from': 'from_',
+    'for': 'for_',
+    'while': 'while_',
+    'if': 'if_',
+    'else': 'else_',
+    'elif': 'elif_',
+    'try': 'try_',
+    'except': 'except_',
+    'finally': 'finally_',
+    'with': 'with_',
+    'as': 'as_',
+    'pass': 'pass_',
+    'break': 'break_',
+    'continue': 'continue_',
+    'yield': 'yield_',
+    'lambda': 'lambda_',
+    'global': 'global_',
+    'nonlocal': 'nonlocal_',
+    'assert': 'assert_',
+    'raise': 'raise_',
+    'del': 'del_',
+    'in': 'in_',
+    'is': 'is_',
+    'not': 'not_',
+    'and': 'and_',
+    'or': 'or_',
+}
+
+# 反向映射：从安全名称到原始名称
+REVERSE_KEYWORD_MAPPING = {v: k for k, v in KEYWORD_MAPPING.items()}
+
+
+def sanitize_field_name(field_name):
+    """
+    将数据字段名转换为安全的Python标识符
+
+    Args:
+        field_name: 原始字段名
+
+    Returns:
+        safe_name: 安全的字段名
+    """
+    if keyword.iskeyword(field_name):
+        return KEYWORD_MAPPING.get(field_name, field_name + '_')
+    return field_name
+
+
+def get_original_field_name(safe_name):
+    """
+    将安全的字段名转换回原始字段名
+
+    Args:
+        safe_name: 安全的字段名
+
+    Returns:
+        original_name: 原始字段名
+    """
+    return REVERSE_KEYWORD_MAPPING.get(safe_name, safe_name)
 
 
 # ============================================================================
@@ -220,16 +291,23 @@ def create_primitive_set(window_sizes=[5, 10, 20, 40, 60],
         pset: DEAP原语集对象
     """
 
-    # 创建原语集，输出类型为pd.DataFrame
-    pset = gp.PrimitiveSet("MAIN", 0)
+    # 创建原语集，使用命名参数（一个参数对应每个数据字段）
+    # 输出类型为pd.DataFrame
+    pset = gp.PrimitiveSet("MAIN", len(data_fields))
 
     # ========================================================================
-    # 1. 添加终端节点（Terminal）：数据字段
+    # 1. 重命名参数为数据字段名
     # ========================================================================
 
-    # 为每个数据字段添加终端
-    for field in data_fields:
-        pset.addTerminal(field, name=field)
+    # 将ARG0, ARG1, ... 重命名为 close, open, high, low, volume等
+    # 注意：自动处理Python保留关键字（如 'return' -> 'ret'）
+    for i, field in enumerate(data_fields):
+        safe_field = sanitize_field_name(field)
+        pset.renameArguments(**{f'ARG{i}': safe_field})
+
+    # 保存原始字段名映射，供后续使用
+    pset._original_field_names = data_fields
+    pset._safe_field_names = [sanitize_field_name(f) for f in data_fields]
 
     # ========================================================================
     # 2. 添加算术运算符

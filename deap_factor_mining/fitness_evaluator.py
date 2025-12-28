@@ -15,6 +15,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from gp_factor import GPFactor
 from config import FITNESS_WEIGHTS, FACTOR_CONFIG
+from utils import check_expression_validity
 
 
 class FitnessEvaluator:
@@ -66,6 +67,25 @@ class FitnessEvaluator:
         individual_str = str(individual)
         if individual_str in self.cache:
             return self.cache[individual_str]
+
+        # ====================================================================
+        # CRITICAL: 检查表达式有效性，拒绝无意义的模式
+        # ====================================================================
+        is_valid, invalid_reasons = check_expression_validity(individual, self.pset)
+
+        if not is_valid:
+            # 表达式无效，给予严重惩罚
+            penalty_score = -10000.0  # 极低的适应度
+            self.failure_count += 1
+
+            if self.verbose and self.failure_count <= 5:
+                print(f"[Eval {self.eval_count}] INVALID EXPRESSION: {individual_str}")
+                for reason in invalid_reasons:
+                    print(f"  - {reason}")
+
+            # 缓存并返回惩罚分数
+            self.cache[individual_str] = (penalty_score,)
+            return (penalty_score,)
 
         try:
             # 创建GP因子对象
@@ -130,6 +150,8 @@ class FitnessEvaluator:
         """
         根据因子性能指标计算综合适应度分数
 
+        用户最关心IC，所以IC的权重最高！
+
         Args:
             results: 因子性能结果字典
             individual: GP个体
@@ -139,27 +161,29 @@ class FitnessEvaluator:
         """
         fitness = 0.0
 
-        # 1. ICIR（年化IC信息比率）- 主要指标
-        icir = results.get('anual_icir', np.nan)
-        if not np.isnan(icir) and not np.isinf(icir):
-            fitness += self.fitness_weights['icir'] * icir
-        else:
-            # ICIR缺失，给予惩罚
-            fitness -= 10.0
-
-        # 2. IR（年化信息比率）
-        ir = results.get('Annualized IR', np.nan)
-        if not np.isnan(ir) and not np.isinf(ir):
-            fitness += self.fitness_weights['ir'] * ir
-        else:
-            fitness -= 5.0
-
-        # 3. 平均IC
+        # 1. 平均IC - 最重要的指标！给予极高权重
         avg_ic = results.get('daily_avg_ic', np.nan)
         if not np.isnan(avg_ic) and not np.isinf(avg_ic):
-            fitness += self.fitness_weights['ic'] * abs(avg_ic) * 100  # 放大系数
+            # 使用绝对值IC，放大1000倍以确保它主导适应度
+            fitness += self.fitness_weights['ic'] * abs(avg_ic) * 1000
         else:
-            fitness -= 5.0
+            # IC缺失，给予严重惩罚
+            fitness -= 100.0
+
+        # 2. ICIR（年化IC信息比率）- 第二重要
+        icir = results.get('anual_icir', np.nan)
+        if not np.isnan(icir) and not np.isinf(icir):
+            fitness += self.fitness_weights['icir'] * abs(icir) * 10  # 放大10倍
+        else:
+            # ICIR缺失，给予惩罚
+            fitness -= 50.0
+
+        # 3. IR（年化信息比率）
+        ir = results.get('Annualized IR', np.nan)
+        if not np.isnan(ir) and not np.isinf(ir):
+            fitness += self.fitness_weights['ir'] * ir * 5  # 放大5倍
+        else:
+            fitness -= 20.0
 
         # 4. 换手率惩罚（换手率越低越好）
         turnover = results.get('avg_turn_over', np.nan)
@@ -168,11 +192,19 @@ class FitnessEvaluator:
             if turnover > 0.5:
                 fitness += self.fitness_weights['turnover_penalty'] * (turnover - 0.5) * 10
 
-        # 5. 表达式复杂度惩罚（鼓励简单表达式）
+        # 5. 表达式复杂度奖励（在合理范围内鼓励复杂因子）
         complexity = len(individual)
         depth = individual.height
-        complexity_penalty = -0.01 * complexity - 0.02 * depth
-        fitness += complexity_penalty
+        # 奖励中等复杂度（深度3-6，大小10-30），过于简单或复杂都会被轻微惩罚
+        if 3 <= depth <= 6 and 10 <= complexity <= 30:
+            complexity_bonus = 0.5  # 小幅奖励
+        elif depth < 3 or complexity < 5:
+            complexity_bonus = -1.0  # 太简单，惩罚
+        elif depth > 8 or complexity > 50:
+            complexity_bonus = -0.5  # 太复杂，轻微惩罚
+        else:
+            complexity_bonus = 0.0
+        fitness += complexity_bonus
 
         # 6. 最大回撤惩罚
         max_drawdown = results.get('Maximum Drawdown', np.nan)

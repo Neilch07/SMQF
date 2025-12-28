@@ -296,6 +296,122 @@ def create_factor_report(run_dir: str, output_file: str = None):
     return html
 
 
+def check_expression_validity(individual, pset=None):
+    """
+    检查GP表达式是否包含无意义的模式
+
+    检查以下无效模式：
+    1. ts_corr(x, x) - 自相关，结果恒为1
+    2. ts_cov(x, x) - 自协方差，等价于方差
+    3. div(x, x) - 自除，结果恒为1
+    4. sub(x, x) - 自减，结果恒为0
+
+    Args:
+        individual: DEAP GP个体
+        pset: DEAP原语集（可选）
+
+    Returns:
+        tuple: (is_valid, invalid_reasons)
+            - is_valid: bool, True表示表达式有效
+            - invalid_reasons: list, 无效原因列表
+    """
+    invalid_reasons = []
+
+    # 需要检查的函数名（这些函数不应该接受相同的参数）
+    forbidden_same_args_funcs = [
+        'ts_corr', 'ts_cov', 'div', 'sub', 'corr', 'cov'
+    ]
+
+    # 遍历表达式树，查找问题模式
+    i = 0
+    while i < len(individual):
+        node = individual[i]
+
+        # 检查是否是函数节点
+        if hasattr(node, 'name') and hasattr(node, 'arity'):
+            func_name_base = node.name
+
+            # 检查是否是需要不同参数的函数（去除后缀如 _20, _60）
+            for forbidden_func in forbidden_same_args_funcs:
+                if func_name_base.startswith(forbidden_func):
+                    # 检查是否是二元函数
+                    if node.arity == 2:
+                        # 获取两个参数的位置
+                        arg1_idx = i + 1
+                        arg2_idx = i + 2
+
+                        # 查找第二个参数的实际位置（需要跳过第一个参数的子树）
+                        arg2_idx = _get_second_arg_index(individual, i)
+
+                        if arg1_idx < len(individual) and arg2_idx < len(individual):
+                            arg1 = individual[arg1_idx]
+                            arg2 = individual[arg2_idx]
+
+                            # 检查两个参数是否相同（对于终端节点）
+                            if _are_same_nodes(arg1, arg2):
+                                invalid_reasons.append(
+                                    f"Invalid pattern: {func_name_base}({arg1}, {arg2}) - "
+                                    f"same arguments have no information"
+                                )
+                    break
+
+        i += 1
+
+    is_valid = len(invalid_reasons) == 0
+    return is_valid, invalid_reasons
+
+
+def _get_second_arg_index(individual, func_idx):
+    """
+    获取二元函数第二个参数的索引位置
+
+    Args:
+        individual: GP个体
+        func_idx: 函数节点的索引
+
+    Returns:
+        int: 第二个参数的索引
+    """
+    if func_idx >= len(individual):
+        return func_idx + 1
+
+    # 跳过第一个参数（及其子树）
+    idx = func_idx + 1
+    nodes_to_skip = 1  # 需要跳过的节点数
+
+    while nodes_to_skip > 0 and idx < len(individual):
+        node = individual[idx]
+        if hasattr(node, 'arity'):
+            nodes_to_skip += node.arity
+        nodes_to_skip -= 1
+        idx += 1
+
+    return idx
+
+
+def _are_same_nodes(node1, node2):
+    """
+    检查两个节点是否相同
+
+    Args:
+        node1: 第一个节点
+        node2: 第二个节点
+
+    Returns:
+        bool: 是否相同
+    """
+    # 比较终端节点
+    if hasattr(node1, 'value') and hasattr(node2, 'value'):
+        return str(node1.value) == str(node2.value)
+
+    # 比较函数节点
+    if hasattr(node1, 'name') and hasattr(node2, 'name'):
+        return node1.name == node2.name
+
+    # 比较字符串表示
+    return str(node1) == str(node2)
+
+
 def export_best_factor_as_class(individual, pset, factor_name: str,
                                 output_file: str = None):
     """

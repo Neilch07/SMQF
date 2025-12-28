@@ -10,8 +10,8 @@ GA_CONFIG = {
     'mutation_prob': 0.2,          # 变异概率
     'tournament_size': 3,          # 锦标赛选择大小
     'elite_size': 5,               # 精英保留数量
-    'max_depth': 5,                # 最大树深度（限制因子表达式层数）
-    'min_depth': 2,                # 最小树深度
+    'max_depth': 8,                # 最大树深度（增加以支持更复杂的因子）
+    'min_depth': 3,                # 最小树深度（增加以生成更复杂的因子）
 }
 
 # 因子评价参数
@@ -28,11 +28,12 @@ FACTOR_CONFIG = {
 }
 
 # 适应度权重（用于多目标优化）
+# 用户最关心的是IC，所以给IC极高的权重
 FITNESS_WEIGHTS = {
-    'icir': 0.4,                   # ICIR权重
-    'ir': 0.3,                     # IR权重
-    'ic': 0.2,                     # 平均IC权重
-    'turnover_penalty': -0.1,      # 换手率惩罚权重
+    'icir': 5.0,                   # ICIR权重
+    'ir': 2.0,                     # IR权重
+    'ic': 20.0,                    # 平均IC权重 - 最重要！
+    'turnover_penalty': -0.05,     # 换手率惩罚权重（降低）
 }
 
 # GP原语配置
