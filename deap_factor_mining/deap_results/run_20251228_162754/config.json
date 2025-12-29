@@ -1,0 +1,55 @@
+{
+  "ga": {
+    "population_size": 100,
+    "n_generations": 50,
+    "crossover_prob": 0.7,
+    "mutation_prob": 0.2,
+    "tournament_size": 3,
+    "elite_size": 5,
+    "max_depth": 8,
+    "min_depth": 3
+  },
+  "factor": {
+    "start_date": "2015-01-01",
+    "end_date": "2023-12-31",
+    "start_os_date": "2022-01-01",
+    "universe": "top75pct",
+    "lag_periods": 2,
+    "ic_return_horizon": 5,
+    "n_group": 10,
+    "quantile": 0.2,
+    "trading_cost": 0.0012
+  },
+  "fitness": {
+    "icir": 5.0,
+    "ir": 2.0,
+    "ic": 20.0,
+    "turnover_penalty": -0.05
+  },
+  "primitive": {
+    "window_sizes": [
+      5,
+      10,
+      20,
+      40,
+      60
+    ],
+    "data_fields": [
+      "close",
+      "open",
+      "high",
+      "low",
+      "volume",
+      "return"
+    ],
+    "enable_division": true,
+    "enable_high_complexity": true
+  },
+  "output": {
+    "output_dir": "./deap_results",
+    "save_best_n": 10,
+    "save_population": true,
+    "save_log": true,
+    "plot_evolution": true
+  }
+}

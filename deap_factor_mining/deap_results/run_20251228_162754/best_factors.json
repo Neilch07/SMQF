@@ -1,0 +1,82 @@
+[
+  {
+    "rank": 1,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(abs(low)))))",
+    "size": 10,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 2,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(sign(sign(low))), cs_rank(sign(low)))))",
+    "size": 10,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 3,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(abs(sign(open))), cs_rank(sign(low)))))",
+    "size": 10,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 4,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(cs_rank(sign(low))), cs_rank(sign(low)))))",
+    "size": 10,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 5,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(high)))))",
+    "size": 10,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 6,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(abs(sign(low))), sign(abs(sign(low))))))",
+    "size": 11,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 7,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(sign(low))))))",
+    "size": 11,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 8,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(sign(low)), cs_rank(sign(sign(volume))))))",
+    "size": 10,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 9,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(abs(sign(low))), sign(sign(sign(low))))))",
+    "size": 11,
+    "depth": 6,
+    "performance": {}
+  },
+  {
+    "rank": 10,
+    "fitness": 5111.267757023157,
+    "expression": "ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(low)))))",
+    "size": 10,
+    "depth": 6,
+    "performance": {}
+  }
+]

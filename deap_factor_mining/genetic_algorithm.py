@@ -355,7 +355,7 @@ class GeneticAlgorithmFactorMiner:
                     pset=self.pset,
                     factor_name=f'best_factor_{rank+1}',
                     params=self.factor_config,
-                    data=self.shared_data
+                    data=self.shared_data['data']  # 修复：使用 shared_data['data'] 而不是 shared_data
                 )
                 gp_factor.run(turnoff_display=True)
                 results = gp_factor.get_performance()

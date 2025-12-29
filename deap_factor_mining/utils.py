@@ -305,6 +305,8 @@ def check_expression_validity(individual, pset=None):
     2. ts_cov(x, x) - 自协方差，等价于方差
     3. div(x, x) - 自除，结果恒为1
     4. sub(x, x) - 自减，结果恒为0
+    5. sign(sign(...)) - 多层sign嵌套，容易导致常数
+    6. sign(abs(...)) - abs后的sign总是1（对正数）
 
     Args:
         individual: DEAP GP个体
@@ -321,6 +323,14 @@ def check_expression_validity(individual, pset=None):
     forbidden_same_args_funcs = [
         'ts_corr', 'ts_cov', 'div', 'sub', 'corr', 'cov'
     ]
+
+    # 检查过多的sign嵌套
+    sign_depth = _count_nested_signs(individual)
+    if sign_depth > 2:
+        invalid_reasons.append(
+            f"Invalid pattern: Too many nested sign() operations (depth={sign_depth}). "
+            f"This often leads to constant factors."
+        )
 
     # 遍历表达式树，查找问题模式
     i = 0
@@ -359,6 +369,81 @@ def check_expression_validity(individual, pset=None):
 
     is_valid = len(invalid_reasons) == 0
     return is_valid, invalid_reasons
+
+
+def _count_nested_signs(individual):
+    """
+    计算表达式中最大sign嵌套深度
+
+    Args:
+        individual: GP个体
+
+    Returns:
+        int: 最大sign嵌套深度
+    """
+    def count_signs_recursive(node_idx, depth=0):
+        """递归计算sign嵌套深度"""
+        if node_idx >= len(individual):
+            return depth
+
+        node = individual[node_idx]
+
+        # 如果是sign函数，增加深度
+        if hasattr(node, 'name') and node.name == 'sign':
+            current_depth = depth + 1
+            # 递归检查子节点
+            if hasattr(node, 'arity') and node.arity > 0:
+                child_idx = node_idx + 1
+                max_child_depth = count_signs_recursive(child_idx, current_depth)
+                return max_child_depth
+            return current_depth
+
+        # 如果不是sign，重置深度但继续检查子节点
+        if hasattr(node, 'arity') and node.arity > 0:
+            max_depth = depth
+            child_idx = node_idx + 1
+            for _ in range(node.arity):
+                child_depth = count_signs_recursive(child_idx, depth)
+                max_depth = max(max_depth, child_depth)
+                # 跳到下一个子节点
+                child_idx = _skip_subtree(individual, child_idx)
+            return max_depth
+
+        return depth
+
+    max_sign_depth = 0
+    for i in range(len(individual)):
+        depth = count_signs_recursive(i, 0)
+        max_sign_depth = max(max_sign_depth, depth)
+
+    return max_sign_depth
+
+
+def _skip_subtree(individual, node_idx):
+    """
+    跳过一个节点及其整个子树，返回下一个兄弟节点的索引
+
+    Args:
+        individual: GP个体
+        node_idx: 当前节点索引
+
+    Returns:
+        int: 下一个兄弟节点的索引
+    """
+    if node_idx >= len(individual):
+        return node_idx + 1
+
+    node = individual[node_idx]
+    idx = node_idx + 1
+    nodes_to_skip = getattr(node, 'arity', 0)
+
+    while nodes_to_skip > 0 and idx < len(individual):
+        child_node = individual[idx]
+        nodes_to_skip += getattr(child_node, 'arity', 0)
+        nodes_to_skip -= 1
+        idx += 1
+
+    return idx
 
 
 def _get_second_arg_index(individual, func_idx):

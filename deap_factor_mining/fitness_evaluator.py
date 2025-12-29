@@ -115,11 +115,47 @@ class FitnessEvaluator:
             # 运行因子评价（关闭显示）
             gp_factor.run(turnoff_display=True)
 
+            # ====================================================================
+            # CRITICAL: 直接检查因子数据，拒绝常数因子
+            # ====================================================================
+            factor_data = gp_factor.get_factor()
+
+            if factor_data is None or factor_data.empty:
+                if self.verbose:
+                    print(f"[Eval {self.eval_count}] REJECTED: Factor data is empty")
+                self.cache[individual_str] = (-10000.0,)
+                return (-10000.0,)
+
+            # 检查是否为常数因子
+            all_values = factor_data.values.flatten()
+            all_values = all_values[~np.isnan(all_values)]
+
+            if len(all_values) == 0:
+                if self.verbose:
+                    print(f"[Eval {self.eval_count}] REJECTED: All factor values are NaN")
+                self.cache[individual_str] = (-10000.0,)
+                return (-10000.0,)
+
+            unique_count = len(np.unique(all_values))
+            if unique_count <= 1:
+                if self.verbose:
+                    print(f"[Eval {self.eval_count}] REJECTED: Constant factor (unique_count={unique_count}, value={all_values[0] if len(all_values) > 0 else 'NaN'})")
+                self.cache[individual_str] = (-10000.0,)
+                return (-10000.0,)
+
+            # 检查横截面标准差（区分度）
+            cs_std = factor_data.std(axis=1).mean()
+            if cs_std < 1e-6:
+                if self.verbose:
+                    print(f"[Eval {self.eval_count}] REJECTED: Cross-sectional std too low ({cs_std:.2e})")
+                self.cache[individual_str] = (-10000.0,)
+                return (-10000.0,)
+
             # 提取性能指标
             results = gp_factor.get_performance()
 
             # 计算综合适应度
-            fitness_score = self._calculate_fitness(results, individual)
+            fitness_score = self._calculate_fitness(results, individual, factor_data)
 
             # 缓存结果
             self.cache[individual_str] = (fitness_score,)
@@ -146,7 +182,7 @@ class FitnessEvaluator:
             self.cache[individual_str] = (-1000.0,)
             return (-1000.0,)
 
-    def _calculate_fitness(self, results: Dict, individual) -> float:
+    def _calculate_fitness(self, results: Dict, individual, factor_data=None) -> float:
         """
         根据因子性能指标计算综合适应度分数
 
@@ -155,22 +191,40 @@ class FitnessEvaluator:
         Args:
             results: 因子性能结果字典
             individual: GP个体
+            factor_data: 因子数据（用于额外验证）
 
         Returns:
             float: 适应度分数
         """
         fitness = 0.0
 
-        # 1. 平均IC - 最重要的指标！给予极高权重
+        # 0. 二次检查：如果有因子数据，再次验证不是常数
+        if factor_data is not None:
+            all_values = factor_data.values.flatten()
+            all_values = all_values[~np.isnan(all_values)]
+            if len(all_values) > 0 and len(np.unique(all_values)) <= 1:
+                return -10000.0  # 常数因子，拒绝
+
+        # 1. 检查换手率 - 如果换手率接近0，说明因子是常数，给予严重惩罚
+        turnover = results.get('avg_turn_over', np.nan)
+        if not np.isnan(turnover) and turnover < 1e-6:
+            # 换手率接近0，因子几乎不变，视为常数因子
+            return -10000.0  # 极低适应度，直接返回
+
+        # 2. 平均IC - 最重要的指标！给予极高权重
         avg_ic = results.get('daily_avg_ic', np.nan)
         if not np.isnan(avg_ic) and not np.isinf(avg_ic):
+            # IC的正常范围应该是 [-1, 1]，如果超出范围说明有问题
+            if abs(avg_ic) > 1.0:
+                # IC异常，可能是数据问题或计算错误
+                return -5000.0
             # 使用绝对值IC，放大1000倍以确保它主导适应度
             fitness += self.fitness_weights['ic'] * abs(avg_ic) * 1000
         else:
             # IC缺失，给予严重惩罚
             fitness -= 100.0
 
-        # 2. ICIR（年化IC信息比率）- 第二重要
+        # 3. ICIR（年化IC信息比率）- 第二重要
         icir = results.get('anual_icir', np.nan)
         if not np.isnan(icir) and not np.isinf(icir):
             fitness += self.fitness_weights['icir'] * abs(icir) * 10  # 放大10倍
@@ -178,21 +232,21 @@ class FitnessEvaluator:
             # ICIR缺失，给予惩罚
             fitness -= 50.0
 
-        # 3. IR（年化信息比率）
+        # 4. IR（年化信息比率）
         ir = results.get('Annualized IR', np.nan)
         if not np.isnan(ir) and not np.isinf(ir):
             fitness += self.fitness_weights['ir'] * ir * 5  # 放大5倍
         else:
             fitness -= 20.0
 
-        # 4. 换手率惩罚（换手率越低越好）
-        turnover = results.get('avg_turn_over', np.nan)
+        # 5. 换手率检查（应该在合理范围内）
+        # 换手率太低（<0.01）可能是常数因子，太高（>0.5）则成本太高
         if not np.isnan(turnover) and not np.isinf(turnover):
             # 换手率超过0.5则惩罚
             if turnover > 0.5:
                 fitness += self.fitness_weights['turnover_penalty'] * (turnover - 0.5) * 10
 
-        # 5. 表达式复杂度奖励（在合理范围内鼓励复杂因子）
+        # 6. 表达式复杂度奖励（在合理范围内鼓励复杂因子）
         complexity = len(individual)
         depth = individual.height
         # 奖励中等复杂度（深度3-6，大小10-30），过于简单或复杂都会被轻微惩罚
@@ -206,13 +260,13 @@ class FitnessEvaluator:
             complexity_bonus = 0.0
         fitness += complexity_bonus
 
-        # 6. 最大回撤惩罚
+        # 7. 最大回撤惩罚
         max_drawdown = results.get('Maximum Drawdown', np.nan)
         if not np.isnan(max_drawdown) and not np.isinf(max_drawdown):
             if max_drawdown > 0.3:  # 回撤超过30%则惩罚
                 fitness -= (max_drawdown - 0.3) * 5
 
-        # 7. 奖励高年化收益
+        # 8. 奖励高年化收益
         annual_return = results.get('Annualized Return', np.nan)
         if not np.isnan(annual_return) and not np.isinf(annual_return):
             if annual_return > 0.1:  # 年化收益超过10%则奖励
