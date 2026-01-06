@@ -20,6 +20,16 @@ def ts_sum(df,n,min_periods=None):
         min_periods=int(n/2)
     return df.rolling(n,min_periods=min_periods).sum()
 
+def ts_min(df,n,min_periods=None):
+    if min_periods is None:
+        min_periods=int(n/2)
+    return df.rolling(n,min_periods=min_periods).min()
+
+def ts_max(df,n,min_periods=None):
+    if min_periods is None:
+        min_periods=int(n/2)
+    return df.rolling(n,min_periods=min_periods).max()
+
 def cs_sum(df):
     return df.sum(axis=1)
 

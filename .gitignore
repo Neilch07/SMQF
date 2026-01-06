@@ -1,11 +1,10 @@
 # Data files
-data/
 *.csv
 *.parquet
 *.pkl
+data/
 
 # Model artifacts
-models/
 artifacts/
 runs/
 catboost_info/

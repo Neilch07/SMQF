@@ -97,4 +97,201 @@ class std_20(factor):
     def calc_factor(self):
         close = self.data.get('close')
         self.factor_data = - close.rolling(20).std()
-    
+
+
+# Helper functions for GP factors
+def sign(df):
+    return np.sign(df)
+
+def add(df1, df2):
+    return df1 + df2
+
+def ts_min_5(df):
+    return ts_min(df, 5)
+
+def abs(df):
+    return np.abs(df)
+
+
+# GP Factor 1: ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(abs(low)))))
+class gp_factor_1(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_1',
+            'data_needed': ['low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        if low is None:
+            raise ValueError("gp_factor_1: required data 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(abs(low)))))
+        self.factor_data = ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(abs(low)))))
+
+
+# GP Factor 2: ts_min_5(sign(add(sign(sign(sign(low))), cs_rank(sign(low)))))
+class gp_factor_2(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_2',
+            'data_needed': ['low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        if low is None:
+            raise ValueError("gp_factor_2: required data 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(sign(sign(low))), cs_rank(sign(low)))))
+        self.factor_data = ts_min_5(sign(add(sign(sign(sign(low))), cs_rank(sign(low)))))
+
+
+# GP Factor 3: ts_min_5(sign(add(sign(abs(sign(open))), cs_rank(sign(low)))))
+class gp_factor_3(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_3',
+            'data_needed': ['open', 'low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        open_price = self.data.get('open')
+        low = self.data.get('low')
+        if open_price is None or low is None:
+            raise ValueError("gp_factor_3: required data 'open' or 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(abs(sign(open))), cs_rank(sign(low)))))
+        self.factor_data = ts_min_5(sign(add(sign(abs(sign(open_price))), cs_rank(sign(low)))))
+
+
+# GP Factor 4: ts_min_5(sign(add(sign(cs_rank(sign(low))), cs_rank(sign(low)))))
+class gp_factor_4(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_4',
+            'data_needed': ['low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        if low is None:
+            raise ValueError("gp_factor_4: required data 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(cs_rank(sign(low))), cs_rank(sign(low)))))
+        self.factor_data = ts_min_5(sign(add(sign(cs_rank(sign(low))), cs_rank(sign(low)))))
+
+
+# GP Factor 5: ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(high)))))
+class gp_factor_5(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_5',
+            'data_needed': ['low', 'high'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        high = self.data.get('high')
+        if low is None or high is None:
+            raise ValueError("gp_factor_5: required data 'low' or 'high' not found in self.data")
+        # ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(high)))))
+        self.factor_data = ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(high)))))
+
+
+# GP Factor 6: ts_min_5(sign(add(sign(abs(sign(low))), sign(abs(sign(low))))))
+class gp_factor_6(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_6',
+            'data_needed': ['low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        if low is None:
+            raise ValueError("gp_factor_6: required data 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(abs(sign(low))), sign(abs(sign(low))))))
+        self.factor_data = ts_min_5(sign(add(sign(abs(sign(low))), sign(abs(sign(low))))))
+
+
+# GP Factor 7: ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(sign(low))))))
+class gp_factor_7(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_7',
+            'data_needed': ['low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        if low is None:
+            raise ValueError("gp_factor_7: required data 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(sign(low))))))
+        self.factor_data = ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(sign(low))))))
+
+
+# GP Factor 8: ts_min_5(sign(add(sign(sign(low)), cs_rank(sign(sign(volume))))))
+class gp_factor_8(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_8',
+            'data_needed': ['low', 'volume'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        volume = self.data.get('volume')
+        if low is None or volume is None:
+            raise ValueError("gp_factor_8: required data 'low' or 'volume' not found in self.data")
+        # ts_min_5(sign(add(sign(sign(low)), cs_rank(sign(sign(volume))))))
+        self.factor_data = ts_min_5(sign(add(sign(sign(low)), cs_rank(sign(sign(volume))))))
+
+
+# GP Factor 9: ts_min_5(sign(add(sign(abs(sign(low))), sign(sign(sign(low))))))
+class gp_factor_9(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_9',
+            'data_needed': ['low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        if low is None:
+            raise ValueError("gp_factor_9: required data 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(abs(sign(low))), sign(sign(sign(low))))))
+        self.factor_data = ts_min_5(sign(add(sign(abs(sign(low))), sign(sign(sign(low))))))
+
+
+# GP Factor 10: ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(low)))))
+# Same as GP Factor 1
+class gp_factor_10(factor):
+    def set_factor_property(self):
+        factor_property = {
+            'factor_name': 'gp_factor_10',
+            'data_needed': ['low'],
+            'factor_type': 'market'
+        }
+        return factor_property
+
+    def calc_factor(self):
+        low = self.data.get('low')
+        if low is None:
+            raise ValueError("gp_factor_10: required data 'low' not found in self.data")
+        # ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(low)))))
+        self.factor_data = ts_min_5(sign(add(sign(abs(sign(low))), cs_rank(sign(low)))))
