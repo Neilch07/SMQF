@@ -154,41 +154,65 @@ def run_single(model_dir, params, split=None):
     return f.results
 
 
-def run_batch(label=None, params=None, split=None):
-    """批量回测所有模型，输出汇总表。"""
+def _worker(args_tuple):
+    """multiprocessing worker: 独立进程回测单个模型。"""
+    model_info, params, split = args_tuple
+    tag = f"{model_info['label']}/{model_info['experiment']}/{model_info['seed']}"
+    try:
+        f = DLPredCombo(model_dir=model_info["path"], split=split, params=dict(params))
+        f.run(turnoff_display=True)
+        r = f.results
+        return {
+            "label": model_info["label"], "experiment": model_info["experiment"],
+            "seed": model_info["seed"], "status": "ok",
+            "train_ret": r.get("Annualized Training Return", np.nan),
+            "train_ir": r.get("Annualized Training IR", np.nan),
+            "test_ret": r.get("Annualized Testing Return", np.nan),
+            "test_ir": r.get("Annualized Testing IR", np.nan),
+            "test_net_ir": r.get("Annualized Testing Net IR", np.nan),
+            "test_mdd": r.get("Maximum Testing Drawdown", np.nan),
+        }
+    except Exception as ex:
+        return {"label": model_info["label"], "experiment": model_info["experiment"],
+                "seed": model_info["seed"], "status": f"fail: {ex}"}
+
+
+def run_batch(label=None, params=None, split=None, n_jobs=None):
+    """并行批量回测所有模型，输出汇总表。"""
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
     if params is None:
         params = {"ir_details": True, "testing_periods": 1,
                   "testing_period_length": 500, "display": False}
+    if n_jobs is None:
+        n_jobs = min(os.cpu_count() or 1, 32)
 
     models = _discover_models(label)
     if not models:
         print("[warn] 没有找到可用模型")
         return
 
+    print(f"[info] 发现 {len(models)} 个模型，使用 {n_jobs} 进程并行回测...")
+    work_items = [(m, params, split) for m in models]
+
     rows = []
-    for m in models:
-        tag = f"{m['label']}/{m['experiment']}/{m['seed']}"
-        try:
-            f = DLPredCombo(model_dir=m["path"], split=split, params=dict(params))
-            f.run(turnoff_display=True)
-            r = f.results
-            rows.append({
-                "label": m["label"], "experiment": m["experiment"], "seed": m["seed"],
-                "train_ret": r.get("Annualized Training Return", np.nan),
-                "train_ir": r.get("Annualized Training IR", np.nan),
-                "test_ret": r.get("Annualized Testing Return", np.nan),
-                "test_ir": r.get("Annualized Testing IR", np.nan),
-                "test_net_ir": r.get("Annualized Testing Net IR", np.nan),
-                "test_mdd": r.get("Maximum Testing Drawdown", np.nan),
-            })
-            print(f"[ok] {tag}: test_ir={rows[-1]['test_ir']:.4f}")
-        except Exception as ex:
-            print(f"[fail] {tag}: {ex}")
+    done = 0
+    with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+        futures = {executor.submit(_worker, w): w[0] for w in work_items}
+        for future in as_completed(futures):
+            result = future.result()
+            done += 1
+            tag = f"{result['label']}/{result['experiment']}/{result['seed']}"
+            if result["status"] == "ok":
+                rows.append(result)
+                print(f"[{done}/{len(models)}] {tag}: test_ir={result['test_ir']:.4f}")
+            else:
+                print(f"[{done}/{len(models)}] {tag}: {result['status']}")
 
     if not rows:
         return
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows).drop(columns=["status"])
 
     # 按 experiment 聚合 (均值)
     agg = df.groupby(["label", "experiment"]).agg(
@@ -219,6 +243,7 @@ def main():
     parser.add_argument("--quantile", type=float, default=0.2)
     parser.add_argument("--list", action="store_true", help="列出所有可用模型")
     parser.add_argument("--batch", action="store_true", help="批量回测所有模型")
+    parser.add_argument("--n-jobs", type=int, default=None, help="并行进程数 (默认 min(cpu, 32))")
     args = parser.parse_args()
 
     if args.list:
@@ -234,7 +259,8 @@ def main():
 
     if args.batch:
         lbl = args.label if args.label != "ret#l#5" else None
-        run_batch(label=lbl, params={**params, "display": False}, split=args.split)
+        run_batch(label=lbl, params={**params, "display": False},
+                  split=args.split, n_jobs=args.n_jobs)
     else:
         model_dir = _resolve_model_dir(args)
         run_single(model_dir, params, split=args.split)
