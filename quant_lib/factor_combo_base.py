@@ -269,20 +269,6 @@ class factor_combo_base():
         self.testing_returns=(self.testing_positions.shift(1)*self.returns/2.0).sum(axis=1)
         self.testing_net_returns=self.testing_returns-0.5*self.params['trading_cost']*testing_trade/2.0
 
-        # Trim returns to actual period indices to avoid zero-dilution in calc_ir
-        train_mask = pd.Series(False, index=self.returns.index)
-        test_mask = pd.Series(False, index=self.returns.index)
-        for i in range(len(self.training_period_indices)):
-            i0, i1 = self.training_period_indices[i]
-            train_mask.iloc[i0:i1] = True
-        for i in range(len(self.testing_period_indices)):
-            i1, i2 = self.testing_period_indices[i]
-            test_mask.iloc[i1:i2] = True
-        self.training_returns = self.training_returns[train_mask]
-        self.training_net_returns = self.training_net_returns[train_mask]
-        self.testing_returns = self.testing_returns[test_mask]
-        self.testing_net_returns = self.testing_net_returns[test_mask]
-
 
         if self.params['benchmark'] is not None:
             long_pos = self.training_positions.where(self.training_positions>0, np.nan)
@@ -298,44 +284,56 @@ class factor_combo_base():
             self.testing_ex_returns=(long_testing_rets-self.index_returns)/1.2
             self.testing_net_ex_returns=(long_testing_rets-self.index_returns-long_testing_trade_cost_rets)/1.2
 
+    def _get_period_returns(self, returns, period_indices):
+        """Concatenate only the actual period slices, avoiding zero-padded regions."""
+        slices = [returns.iloc[i0:i1] for i0, i1 in period_indices]
+        return pd.concat(slices) if slices else returns
+
     def calc_ir(self):
-        self.results['Annualized Training Return']=self.params['n_trading_days']*self.training_returns.mean()
-        self.results['Annualized Training Volatility']=np.sqrt(self.params['n_trading_days'])*self.training_returns.std()
+        train_ret = self._get_period_returns(self.training_returns, self.training_period_indices)
+        train_net_ret = self._get_period_returns(self.training_net_returns, self.training_period_indices)
+        test_ret = self._get_period_returns(self.testing_returns, self.testing_period_indices)
+        test_net_ret = self._get_period_returns(self.testing_net_returns, self.testing_period_indices)
+
+        N = self.params['n_trading_days']
+
+        self.results['Annualized Training Return']=N*train_ret.mean()
+        self.results['Annualized Training Volatility']=np.sqrt(N)*train_ret.std()
         if self.results['Annualized Training Volatility']>0:
             self.results['Annualized Training IR']=self.results['Annualized Training Return']/self.results['Annualized Training Volatility']
         else:
             self.results['Annualized Training IR']=np.nan
-        nav=(1+self.training_returns).cumprod()
+        nav=(1+train_ret).cumprod()
         drawdown=nav/nav.cummax()-1
         self.results['Maximum Training Drawdown']=-drawdown.min()
-        
-        self.results['Annualized Training Net Return']=self.params['n_trading_days']*self.training_net_returns.mean()
-        self.results['Annualized Training Net Volatility']=np.sqrt(self.params['n_trading_days'])*self.training_net_returns.std()
+
+        self.results['Annualized Training Net Return']=N*train_net_ret.mean()
+        self.results['Annualized Training Net Volatility']=np.sqrt(N)*train_net_ret.std()
         if self.results['Annualized Training Net Volatility']>0:
             self.results['Annualized Training Net IR']=self.results['Annualized Training Net Return']/self.results['Annualized Training Net Volatility']
         else:
             self.results['Annualized Training Net IR']=np.nan
-        net_nav=(1+self.training_net_returns).cumprod()
+        net_nav=(1+train_net_ret).cumprod()
         drawdown=net_nav/net_nav.cummax()-1
         self.results['Maximum Training Net Drawdown']=-drawdown.min()
 
-        self.results['Annualized Testing Return']=self.params['n_trading_days']*self.testing_returns.mean()
-        self.results['Annualized Testing Volatility']=np.sqrt(self.params['n_trading_days'])*self.testing_returns.std()
+        self.results['Annualized Testing Return']=N*test_ret.mean()
+        self.results['Annualized Testing Volatility']=np.sqrt(N)*test_ret.std()
         if self.results['Annualized Testing Volatility']>0:
             self.results['Annualized Testing IR']=self.results['Annualized Testing Return']/self.results['Annualized Testing Volatility']
         else:
             self.results['Annualized Testing IR']=np.nan
-        nav=(1+self.testing_returns).cumprod()
+        nav=(1+test_ret).cumprod()
         drawdown=nav/nav.cummax()-1
         self.results['Maximum Testing Drawdown']=-drawdown.min()
-        
-        self.results['Annualized Testing Net Return']=self.params['n_trading_days']*self.testing_net_returns.mean()
-        self.results['Annualized Testing Net Volatility']=np.sqrt(self.params['n_trading_days'])*self.testing_net_returns.std()
+
+        self.results['Annualized Testing Net Return']=N*test_net_ret.mean()
+        self.results['Annualized Testing Net Volatility']=np.sqrt(N)*test_net_ret.std()
         if self.results['Annualized Testing Net Volatility']>0:
             self.results['Annualized Testing Net IR']=self.results['Annualized Testing Net Return']/self.results['Annualized Testing Net Volatility']
         else:
             self.results['Annualized Testing Net IR']=np.nan
-        net_nav=(1+self.testing_net_returns).cumprod()
+        net_nav=(1+test_net_ret).cumprod()
         drawdown=net_nav/net_nav.cummax()-1
         self.results['Maximum Testing Net Drawdown']=-drawdown.min()
 
@@ -459,10 +457,15 @@ class factor_combo_base():
 
     def plot_nav(self, save_path=None):
         """Plot NAV curves for training and testing periods."""
-        train_nav = (1 + self.training_returns).cumprod()
-        test_nav = (1 + self.testing_returns).cumprod()
-        train_net_nav = (1 + self.training_net_returns).cumprod()
-        test_net_nav = (1 + self.testing_net_returns).cumprod()
+        train_ret = self._get_period_returns(self.training_returns, self.training_period_indices)
+        test_ret = self._get_period_returns(self.testing_returns, self.testing_period_indices)
+        train_net_ret = self._get_period_returns(self.training_net_returns, self.training_period_indices)
+        test_net_ret = self._get_period_returns(self.testing_net_returns, self.testing_period_indices)
+
+        train_nav = (1 + train_ret).cumprod()
+        test_nav = (1 + test_ret).cumprod()
+        train_net_nav = (1 + train_net_ret).cumprod()
+        test_net_nav = (1 + test_net_ret).cumprod()
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 5))
         combo_name = self.params.get('combo_name', '')
