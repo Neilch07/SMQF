@@ -151,27 +151,61 @@ def run_single(model_dir, params, split=None):
     """回测单个模型，返回 results dict。"""
     f = DLPredCombo(model_dir=model_dir, split=split, params=params)
     f.run()
+    # Save NAV plot
+    plot_path = os.path.join(model_dir, "smqf_combo_nav.png")
+    try:
+        f.plot_nav(save_path=plot_path)
+        import matplotlib
+        matplotlib.pyplot.close('all')
+    except Exception:
+        pass
     return f.results
 
 
 def _worker(args_tuple):
-    """multiprocessing worker: 独立进程回测单个模型。"""
+    """multiprocessing worker: 独立进程回测单个模型，结果保存到 seed 目录。"""
     model_info, params, split = args_tuple
     tag = f"{model_info['label']}/{model_info['experiment']}/{model_info['seed']}"
     try:
         f = DLPredCombo(model_dir=model_info["path"], split=split, params=dict(params))
         f.run(turnoff_display=True)
         r = f.results
-        return {
+
+        row = {
             "label": model_info["label"], "experiment": model_info["experiment"],
             "seed": model_info["seed"], "status": "ok",
             "train_ret": r.get("Annualized Training Return", np.nan),
             "train_ir": r.get("Annualized Training IR", np.nan),
+            "train_net_ir": r.get("Annualized Training Net IR", np.nan),
+            "train_mdd": r.get("Maximum Training Drawdown", np.nan),
             "test_ret": r.get("Annualized Testing Return", np.nan),
             "test_ir": r.get("Annualized Testing IR", np.nan),
             "test_net_ir": r.get("Annualized Testing Net IR", np.nan),
             "test_mdd": r.get("Maximum Testing Drawdown", np.nan),
         }
+
+        # 保存到 seed 目录
+        out = {k: v for k, v in row.items() if k != "status"}
+        # 加 ir_details
+        if "training_ir_details" in r:
+            out["train_ir_details"] = r["training_ir_details"]
+            out["train_ret_details"] = r["training_return_details"]
+            out["test_ir_details"] = r["testing_ir_details"]
+            out["test_ret_details"] = r["testing_return_details"]
+        save_path = os.path.join(model_info["path"], "smqf_combo_results.json")
+        with open(save_path, "w") as fh:
+            json.dump(out, fh, indent=2, default=str)
+
+        # Save NAV plot
+        plot_path = os.path.join(model_info["path"], "smqf_combo_nav.png")
+        try:
+            f.plot_nav(save_path=plot_path)
+            import matplotlib
+            matplotlib.pyplot.close('all')
+        except Exception:
+            pass
+
+        return row
     except Exception as ex:
         return {"label": model_info["label"], "experiment": model_info["experiment"],
                 "seed": model_info["seed"], "status": f"fail: {ex}"}
@@ -183,7 +217,7 @@ def run_batch(label=None, params=None, split=None, n_jobs=None):
 
     if params is None:
         params = {"ir_details": True, "testing_periods": 1,
-                  "testing_period_length": 500, "display": False}
+                  "testing_start_date": "2023-01-01", "display": False}
     if n_jobs is None:
         n_jobs = min(os.cpu_count() or 1, 32)
 
@@ -227,6 +261,15 @@ def run_batch(label=None, params=None, split=None, n_jobs=None):
     print("SMQF Combo Backtest Summary (mean across seeds)")
     print("=" * 100)
     print(agg.to_string(float_format="%.4f"))
+
+    # 保存结果到 MODELS_ROOT
+    detail_path = os.path.join(MODELS_ROOT, "smqf_combo_detail.csv")
+    summary_path = os.path.join(MODELS_ROOT, "smqf_combo_summary.csv")
+    df.to_csv(detail_path, index=False, float_format="%.6f")
+    agg.to_csv(summary_path, float_format="%.6f")
+    print(f"\n[saved] 明细: {detail_path}")
+    print(f"[saved] 汇总: {summary_path}")
+
     return df, agg
 
 
@@ -240,6 +283,8 @@ def main():
     parser.add_argument("--testing-periods", type=str, default="1",
                         help="0=全量, 1=单次OOS, rolling=滚动")
     parser.add_argument("--testing-period-length", type=int, default=500)
+    parser.add_argument("--testing-start-date", type=str, default=None,
+                        help="测试期起始日期 (e.g. 2023-01-01), 优先于 testing-period-length")
     parser.add_argument("--quantile", type=float, default=0.2)
     parser.add_argument("--list", action="store_true", help="列出所有可用模型")
     parser.add_argument("--batch", action="store_true", help="批量回测所有模型")
@@ -256,6 +301,8 @@ def main():
     params = {"ir_details": True, "testing_periods": tp,
               "testing_period_length": args.testing_period_length,
               "quantile": args.quantile}
+    if args.testing_start_date:
+        params["testing_start_date"] = args.testing_start_date
 
     if args.batch:
         lbl = args.label if args.label != "ret#l#5" else None

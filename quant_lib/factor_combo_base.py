@@ -37,16 +37,16 @@ class factor_combo_base():
                         }    
     params: Dict[str,Union[int, float, str]] = field(default=None, kw_only=True)
     combo_property: Dict[str,Union[int, float, str]] = field(default=None, kw_only=True)
-    factors_needed: List[str] = field(default=[], kw_only=True)
-    factors_data: Dict[str,pd.DataFrame] = field(default={}, init=False)
-    factors_property: Dict[str,Dict] = field(default={}, init=False)
+    factors_needed: List[str] = field(factory=list, kw_only=True)
+    factors_data: Dict[str,pd.DataFrame] = field(factory=dict, init=False)
+    factors_property: Dict[str,Dict] = field(factory=dict, init=False)
     returns: pd.DataFrame = field(default=None, init=False)
     index_returns: pd.DataFrame = field(default=None, init=False)
-    results: Dict[str,Union[int, float, str]] = field(default={}, init=False)
-    testing_period_indices: List[tuple] = field(default=[], init=False)
-    training_period_indices: List[tuple] = field(default=[], init=False)
-    testing_period_dates: List[tuple] = field(default=[], init=False)
-    training_period_dates: List[tuple] = field(default=[], init=False)
+    results: Dict[str,Union[int, float, str]] = field(factory=dict, init=False)
+    testing_period_indices: List[tuple] = field(factory=list, init=False)
+    training_period_indices: List[tuple] = field(factory=list, init=False)
+    testing_period_dates: List[tuple] = field(factory=list, init=False)
+    training_period_dates: List[tuple] = field(factory=list, init=False)
     testing_positions: pd.DataFrame = field(default=None, init=False)
     training_positions: pd.DataFrame = field(default=None, init=False)
     training_returns: pd.DataFrame = field(default=None, init=False)
@@ -59,13 +59,15 @@ class factor_combo_base():
     testing_net_ex_returns: pd.DataFrame = field(default=None, init=False)
 
     def __attrs_post_init__(self):
+        params0 = dict(self.__params0)
+        combo_property0 = dict(self.__combo_property0)
         if self.params is not None:
-            self.__params0.update(self.params)
-        self.__combo_property0.update(self.set_combo_property())
+            params0.update(self.params)
+        combo_property0.update(self.set_combo_property())
         if self.combo_property is not None:
-            self.__combo_property0.update(self.combo_property)
-        self.params = self.__params0
-        self.combo_property = self.__combo_property0
+            combo_property0.update(self.combo_property)
+        self.params = params0
+        self.combo_property = combo_property0
         self.factors_needed=self.combo_property['factors_needed']
         self.params.update(self.combo_property)
         
@@ -147,7 +149,12 @@ class factor_combo_base():
             self.testing_period_dates.append((np.nan,np.nan))
             self.training_period_dates.append((dates[0],dates[nd-1]))
         elif self.params['testing_periods']==1:
-            testing_period_length=self.params['testing_period_length']
+            if self.params.get('testing_start_date') is not None:
+                test_start_dt = pd.to_datetime(self.params['testing_start_date'])
+                test_start_idx = self.returns.index.searchsorted(test_start_dt)
+                testing_period_length = nd - test_start_idx
+            else:
+                testing_period_length=self.params['testing_period_length']
             if testing_period_length>nd-20:
                 raise ValueError("testing_period_length is too large, not enough data for training")
             self.testing_period_indices.append((nd-testing_period_length,nd))
@@ -261,6 +268,20 @@ class factor_combo_base():
         self.training_net_returns=self.training_returns-0.5*self.params['trading_cost']*training_trade/2.0
         self.testing_returns=(self.testing_positions.shift(1)*self.returns/2.0).sum(axis=1)
         self.testing_net_returns=self.testing_returns-0.5*self.params['trading_cost']*testing_trade/2.0
+
+        # Trim returns to actual period indices to avoid zero-dilution in calc_ir
+        train_mask = pd.Series(False, index=self.returns.index)
+        test_mask = pd.Series(False, index=self.returns.index)
+        for i in range(len(self.training_period_indices)):
+            i0, i1 = self.training_period_indices[i]
+            train_mask.iloc[i0:i1] = True
+        for i in range(len(self.testing_period_indices)):
+            i1, i2 = self.testing_period_indices[i]
+            test_mask.iloc[i1:i2] = True
+        self.training_returns = self.training_returns[train_mask]
+        self.training_net_returns = self.training_net_returns[train_mask]
+        self.testing_returns = self.testing_returns[test_mask]
+        self.testing_net_returns = self.testing_net_returns[test_mask]
 
 
         if self.params['benchmark'] is not None:
@@ -433,6 +454,43 @@ class factor_combo_base():
                 testing_ir=self.results['testing_ir_details'][i]
                 print('%-14s%-14s%-14s%-14s%10.4f%10.4f%10.4f%10.4f' % (dt1,dt2,dt3,dt4,training_ret,training_ir,testing_ret,testing_ir))
             print('%s' % '-'*100)
+
+        self.plot_nav()
+
+    def plot_nav(self, save_path=None):
+        """Plot NAV curves for training and testing periods."""
+        train_nav = (1 + self.training_returns).cumprod()
+        test_nav = (1 + self.testing_returns).cumprod()
+        train_net_nav = (1 + self.training_net_returns).cumprod()
+        test_net_nav = (1 + self.testing_net_returns).cumprod()
+
+        fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+        combo_name = self.params.get('combo_name', '')
+
+        axes[0].plot(train_nav.index, train_nav.values, label='Gross', linewidth=1.2)
+        axes[0].plot(train_net_nav.index, train_net_nav.values, label='Net', linewidth=1.2, alpha=0.8)
+        train_ir = self.results.get('Annualized Training IR', 0)
+        axes[0].set_title(f'Training NAV (IR={train_ir:.2f})')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        axes[0].set_ylabel('NAV')
+
+        axes[1].plot(test_nav.index, test_nav.values, label='Gross', linewidth=1.2)
+        axes[1].plot(test_net_nav.index, test_net_nav.values, label='Net', linewidth=1.2, alpha=0.8)
+        test_ir = self.results.get('Annualized Testing IR', 0)
+        axes[1].set_title(f'Testing NAV (IR={test_ir:.2f})')
+        axes[1].legend()
+        axes[1].grid(True, alpha=0.3)
+        axes[1].set_ylabel('NAV')
+
+        fig.suptitle(f'{combo_name} L-S Portfolio NAV', fontsize=13)
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+            print(f'[saved] NAV plot: {save_path}')
+        else:
+            plt.show()
 
     def clip_weights(self,weights): 
         tw=0
