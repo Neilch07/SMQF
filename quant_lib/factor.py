@@ -537,7 +537,7 @@ class factor():
    
 if __name__ == '__main__':
 
-    from analysis import *
+    from hchen.SMQF.quant_lib.analysis import *
 
     class my_factor1(factor):
         def set_factor_property(self):

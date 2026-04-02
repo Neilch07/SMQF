@@ -3,7 +3,7 @@ from attrs import define, field
 from abc import ABC, abstractmethod
 import numpy as np
 import pandas as pd
-from factor_combo_base import factor_combo_base
+from hchen.SMQF.quant_lib.factor_combo_base import factor_combo_base
 import time
 
 

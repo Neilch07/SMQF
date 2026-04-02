@@ -7,7 +7,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "quant_lib"))
 
-from quant_lib.gp_alphas import *
+from hchen.SMQF.quant_lib.gp_alphas import *
 
 
 def save_gp_factors():

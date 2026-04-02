@@ -7,7 +7,7 @@ import copy
 import itertools
 import time
 from matplotlib import pyplot as plt
-from factor import factor
+from hchen.SMQF.quant_lib.factor import factor
 
 @define
 class multi_factor(factor):

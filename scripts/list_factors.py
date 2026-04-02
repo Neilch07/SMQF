@@ -9,7 +9,7 @@ QLIB_DIR = os.path.join(THIS_DIR, "quant_lib")
 if QLIB_DIR not in sys.path:
     sys.path.append(QLIB_DIR)
 
-from quant_lib.factor import factor
+from hchen.SMQF.quant_lib.factor import factor
 
 def discover_factor_classes(module_name: str):
     """从给定模块中发现继承自 factor 的因子类。"""

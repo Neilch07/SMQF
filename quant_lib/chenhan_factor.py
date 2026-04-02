@@ -1,7 +1,7 @@
-from factor import factor
+from hchen.SMQF.quant_lib.factor import factor
 import numpy as np
 import pandas as pd
-from analysis import *
+from hchen.SMQF.quant_lib.analysis import *
 
 class vol_std20(factor):
     def set_factor_property(self):

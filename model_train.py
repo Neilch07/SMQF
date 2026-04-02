@@ -18,8 +18,8 @@ QLIB_DIR = os.path.join(THIS_DIR, "quant_lib")
 if QLIB_DIR not in sys.path:
 	sys.path.append(QLIB_DIR)
 
-from quant_lib.factor import factor
-from quant_lib.analysis import cs_rank
+from hchen.SMQF.quant_lib.factor import factor
+from hchen.SMQF.quant_lib.analysis import cs_rank
 import importlib
 
 

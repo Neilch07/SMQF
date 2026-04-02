@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import pandas as pd
 import time
-from factor_combo_base import factor_combo_base
+from hchen.SMQF.quant_lib.factor_combo_base import factor_combo_base
 from sklearn.linear_model import LinearRegression,ElasticNet,ElasticNetCV,Ridge,Lasso
 from linearmodels import FamaMacBeth
 

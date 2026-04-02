@@ -7,7 +7,7 @@ import copy
 import itertools
 import time
 from matplotlib import pyplot as plt
-from factor import factor
+from hchen.SMQF.quant_lib.factor import factor
 
 @define
 class future_factor(factor):
@@ -27,7 +27,7 @@ class future_factor(factor):
    
 if __name__ == '__main__':
 
-    from analysis import *
+    from hchen.SMQF.quant_lib.analysis import *
 
     class my_factor1(future_factor):
         def set_factor_property(self):
