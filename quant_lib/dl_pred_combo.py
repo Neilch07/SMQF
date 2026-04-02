@@ -69,9 +69,9 @@ class DLPredCombo(factor_combo_base):
 
     # ── load_data: parquet 替代 pkl ──────────────────────────────────
     def load_data(self):
-        # returns
-        df = pd.read_parquet(self._data_file, columns=["Time", "Ticker", self._ret_col])
-        ret = df.pivot(index="Time", columns="Ticker", values=self._ret_col)
+        # returns — 必须用 ret#l#1 (日收益) 计算P&L，而非 ret#l#22
+        df = pd.read_parquet(self._data_file, columns=["Time", "Ticker", "ret#l#1"])
+        ret = df.pivot(index="Time", columns="Ticker", values="ret#l#1")
         ret.index = pd.to_datetime(ret.index)
         ret.sort_index(inplace=True)
         self.returns = ret
