@@ -49,7 +49,7 @@ python model_train.py \
 ## Project Structure
 
 ```
-SMQF/
+smqf/
 ├── README.md                # 项目说明
 ├── USAGE.md                 # 详细使用指南
 ├── test_vol_std20.py        # 因子测试示例
